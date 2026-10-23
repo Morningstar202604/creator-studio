@@ -1,0 +1,29 @@
+{
+  "name": "@creator-studio/daemon",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@creator-studio/agent-core": "workspace:*",
+    "@creator-studio/model-gateway": "workspace:*",
+    "@creator-studio/protocol": "workspace:*",
+    "@creator-studio/store-sqlite": "workspace:*",
+    "@creator-studio/tools": "workspace:*",
+    "fastify": "5.12.7",
+    "better-sqlite3": "13.0.3",
+    "@fastify/cors": "11.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "22.18.13",
+    "typescript": "5.9.3",
+    "vitest": "3.2.7",
+    "@types/better-sqlite3": "9.6.0"
+  }
+}

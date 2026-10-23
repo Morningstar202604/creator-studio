@@ -1,0 +1,8 @@
+.aqg/
+node_modules/
+dist/
+*.log
+.v2c/
+out/
+apps/desktop/src-tauri/target/
+apps/desktop/dist/

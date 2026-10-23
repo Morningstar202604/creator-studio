@@ -1,0 +1,1195 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>稿台 · 交互原型</title>
+<style>
+  :root {
+    --bg: #F7F6F3;
+    --surface: #FFFFFF;
+    --raised: #FCFBF8;
+    --sunken: #EFEDE8;
+    --field: #EFEDE8;
+    --track: #EAE7E0;
+    --control: #FFFFFF;
+    --hover: #EFEDE8;
+    --selected: #EFEDE8;
+    --border: #DEDBD4;
+    --border-strong: #878277;
+    --fg: #1A1A18;
+    --muted: #5F5C56;
+    --subtle: #68645C;
+    --accent: #2E6F6A;
+    --accent-hover: #25605C;
+    --on-accent: #FFFFFF;
+    --on-danger: #FFFFFF;
+    --danger: #B83A2E;
+    --warn: #8A5E12;
+    --ok: #2F6B43;
+    --info: #35567D;
+    --shadow-1: 0 1px 2px rgba(40, 36, 28, .06);
+    --shadow-2: 0 4px 12px rgba(40, 36, 28, .08);
+    --shadow-3: 0 12px 32px rgba(40, 36, 28, .12);
+    --r-sm: 4px;
+    --r-md: 8px;
+    --r-lg: 12px;
+    --r-xl: 16px;
+    --sans: -apple-system, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Noto Sans SC", sans-serif;
+    --serif: "Songti SC", "STSong", "SimSun", "Noto Serif SC", Georgia, serif;
+    --mono: "JetBrains Mono", "Cascadia Code", "SF Mono", Consolas, monospace;
+    --nav-w: 216px;
+    --inspector-w: 336px;
+  }
+  html[data-theme="dark"] {
+    --bg: #141413;
+    --surface: #1C1C1A;
+    --raised: #232321;
+    --sunken: #262624;
+    --field: #262624;
+    --track: #171716;
+    --control: #2E2E2B;
+    --hover: #2E2E2B;
+    --selected: #2E2E2B;
+    --border: #33322F;
+    --border-strong: #7C776E;
+    --fg: #EDEBE6;
+    --muted: #B4B0A8;
+    --subtle: #9A968E;
+    --accent: #6FB3AC;
+    --accent-hover: #8AC7C1;
+    --on-accent: #0E1A19;
+    --on-danger: #1A1010;
+    --danger: #E57B6D;
+    --warn: #D6A84E;
+    --ok: #7BC195;
+    --info: #8AB4E0;
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, .5);
+    --shadow-2: 0 4px 12px rgba(0, 0, 0, .55);
+    --shadow-3: 0 12px 32px rgba(0, 0, 0, .6);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  button { font: inherit; color: inherit; }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: var(--r-sm);
+  }
+  .skip {
+    position: absolute; left: 8px; top: -40px;
+    z-index: 100; padding: 6px 12px;
+    background: var(--surface); border: 1px solid var(--border-strong);
+    border-radius: var(--r-md); font-size: 12px; color: var(--fg);
+    transition: top 120ms cubic-bezier(.2,0,0,1);
+  }
+  .skip:focus { top: 6px; }
+  ::selection { background: color-mix(in oklab, var(--accent) 18%, transparent); }
+
+  .app {
+    display: grid;
+    grid-template-rows: 44px 1fr auto;
+    height: 100vh;
+    min-width: 900px;
+  }
+
+  /* ---------- top bar ---------- */
+  .topbar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 0 16px 0 18px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+  }
+  .brand {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: calc(var(--nav-w) - 18px);
+  }
+  .wordmark {
+    font-family: var(--serif);
+    font-size: 19px;
+    font-weight: 600;
+    letter-spacing: .08em;
+  }
+  .wordmark-sub {
+    font-size: 11px;
+    color: var(--subtle);
+    letter-spacing: .04em;
+  }
+  .crumb {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--muted);
+    min-width: 0;
+  }
+  .crumb b { font-weight: 500; color: var(--fg); }
+  .crumb > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .crumb > span:first-child { flex: none; }
+  .crumb > span:not(.sep) { min-width: 0; }
+  .crumb .sep { color: var(--border-strong); }
+  .topbar-right {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 26px;
+    padding: 0 9px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background: var(--surface);
+    font-size: 12px;
+    color: var(--muted);
+  }
+  button.chip { cursor: pointer; }
+  button.chip:hover { background: var(--hover); color: var(--fg); }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+  .dot.idle { background: var(--subtle); }
+  .icon-btn {
+    width: 28px; height: 28px;
+    display: inline-grid; place-items: center;
+    border: 1px solid transparent;
+    border-radius: var(--r-md);
+    background: none;
+    cursor: pointer;
+    color: var(--muted);
+  }
+  .icon-btn:hover { background: var(--hover); color: var(--fg); }
+  .avatar {
+    width: 26px; height: 26px; border-radius: 50%;
+    background: var(--accent); color: var(--on-accent);
+    display: grid; place-items: center;
+    font-size: 11px; font-weight: 600;
+  }
+
+  /* ---------- shell ---------- */
+  .shell {
+    display: grid;
+    grid-template-columns: var(--nav-w) 1fr var(--inspector-w);
+    min-height: 0;
+    overflow: hidden;
+  }
+  .shell.no-inspector { grid-template-columns: var(--nav-w) 1fr; }
+
+  .sidenav {
+    border-right: 1px solid var(--border);
+    padding: 12px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    overflow-y: auto;
+  }
+  .nav-group + .nav-group { margin-top: 14px; }
+  .nav-label {
+    font-size: 11px;
+    color: var(--subtle);
+    padding: 6px 8px;
+    letter-spacing: .04em;
+  }
+  .nav-item {
+    display: flex; align-items: center; gap: 9px;
+    height: 32px; padding: 0 8px;
+    border: 0; border-radius: var(--r-md);
+    background: none; cursor: pointer;
+    color: var(--muted);
+    width: 100%;
+    text-align: left;
+  }
+  .nav-item:hover { background: var(--hover); color: var(--fg); }
+  .nav-item[aria-current="true"] {
+    background: var(--selected);
+    color: var(--fg);
+    font-weight: 500;
+  }
+  .nav-item[aria-current="true"] .nav-icon { color: var(--accent); }
+  .nav-icon { width: 16px; display: inline-grid; place-items: center; color: var(--subtle); }
+  .nav-count {
+    margin-left: auto;
+    min-width: 18px; height: 18px; padding: 0 5px;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--warn) 14%, var(--surface));
+    color: var(--warn);
+    font-size: 11px; font-weight: 600;
+    display: grid; place-items: center;
+  }
+  .nav-foot { margin-top: auto; padding-top: 12px; }
+
+  .main {
+    min-width: 0;
+    overflow-y: auto;
+    padding: 22px 28px 28px;
+  }
+  .main.flush { padding: 0; overflow: hidden; display: flex; min-height: 0; }
+
+  /* ---------- generic ---------- */
+  h1, h2, h3, h4 { margin: 0; font-weight: 600; letter-spacing: -.005em; }
+  .page-head {
+    display: flex; align-items: flex-end; gap: 14px;
+    margin-bottom: 18px;
+  }
+  .page-title { font-size: 24px; line-height: 1.35; }
+  .page-sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .page-head .spacer { margin-left: auto; }
+
+  .btn {
+    height: 32px; padding: 0 13px;
+    border-radius: var(--r-md);
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+    cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+  .btn:hover { background: var(--hover); }
+  .btn.primary {
+    background: var(--accent); border-color: var(--accent); color: var(--on-accent);
+  }
+  .btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+  .btn.ghost { border-color: transparent; background: none; color: var(--muted); }
+  .btn.ghost:hover { background: var(--hover); color: var(--fg); }
+  .btn.sm { height: 26px; padding: 0 9px; font-size: 12px; }
+  .btn.danger { background: var(--danger); border-color: var(--danger); color: var(--on-danger); }
+
+  .input {
+    height: 32px; padding: 0 10px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-md);
+    background: var(--field);
+    color: var(--fg);
+    font: inherit; font-size: 13px;
+    width: 100%;
+  }
+  .input::placeholder { color: var(--subtle); }
+  .input:focus { outline: 2px solid var(--accent); outline-offset: -1px; background: var(--control); }
+
+  .badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    height: 20px; padding: 0 8px;
+    border-radius: 999px;
+    font-size: 11px; font-weight: 500;
+    background: var(--track); color: var(--muted);
+  }
+  .badge.ok { background: color-mix(in oklab, var(--ok) 13%, var(--surface)); color: var(--ok); }
+  .badge.warn { background: color-mix(in oklab, var(--warn) 13%, var(--surface)); color: var(--warn); }
+  .badge.danger { background: color-mix(in oklab, var(--danger) 13%, var(--surface)); color: var(--danger); }
+  .badge.info { background: color-mix(in oklab, var(--info) 13%, var(--surface)); color: var(--info); }
+  .badge.accent { background: color-mix(in oklab, var(--accent) 14%, var(--surface)); color: var(--accent); }
+
+  /* ---------- projects ---------- */
+  .board-toolbar {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 14px;
+  }
+  .segmented {
+    display: inline-flex;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    overflow: hidden;
+    background: var(--surface);
+  }
+  .segmented button {
+    border: 0; background: none; cursor: pointer;
+    height: 30px; padding: 0 12px;
+    font-size: 12px; color: var(--muted);
+  }
+  .segmented button + button { border-left: 1px solid var(--border); }
+  .segmented button[aria-pressed="true"] { background: var(--selected); color: var(--fg); font-weight: 500; }
+  .search {
+    position: relative; width: 220px;
+  }
+  .search .input { padding-left: 30px; background: var(--surface); }
+  .search svg { position: absolute; left: 9px; top: 8px; color: var(--subtle); }
+
+  .ledger {
+    border-top: 1px solid var(--border);
+  }
+  .ledger-head, .ledger-row {
+    display: grid;
+    grid-template-columns: 1fr 132px 74px 78px 92px;
+    align-items: center;
+    gap: 16px;
+  }
+  .ledger-head {
+    height: 34px;
+    font-size: 11px;
+    color: var(--subtle);
+    border-bottom: 1px solid var(--border);
+    letter-spacing: .04em;
+  }
+  .ledger-row {
+    height: 66px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    padding: 0 4px;
+    transition: background 120ms cubic-bezier(.2,0,0,1);
+  }
+  .ledger-row:hover { background: var(--surface); }
+  .proj-title { font-size: 14px; font-weight: 500; display: flex; align-items: center; gap: 8px; }
+  .proj-sub { font-size: 12px; color: var(--subtle); margin-top: 3px; }
+  .stages { display: flex; gap: 3px; align-items: center; }
+  .stages i {
+    width: 11px; height: 3px; border-radius: 2px; background: var(--border);
+    display: block;
+  }
+  .stages i.done { background: var(--accent); }
+  .stages i.now { background: var(--warn); }
+  .num { font-family: var(--mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .row-menu { opacity: 0; }
+  .ledger-row:hover .row-menu { opacity: 1; }
+
+  .section-note {
+    margin-top: 26px; padding-top: 14px;
+    border-top: 1px solid var(--border);
+    display: flex; gap: 32px;
+    font-size: 12px; color: var(--subtle);
+  }
+  .section-note b { display: block; font-size: 20px; color: var(--fg); font-weight: 500; font-variant-numeric: tabular-nums; }
+
+  /* ---------- workspace ---------- */
+  .ws {
+    display: grid;
+    grid-template-columns: 168px minmax(0, 1fr);
+    flex: 1;
+    min-height: 0;
+  }
+  .rail {
+    border-right: 1px solid var(--border);
+    padding: 20px 14px;
+    overflow-y: auto;
+  }
+  .rail-title { font-size: 11px; color: var(--subtle); letter-spacing: .04em; margin-bottom: 12px; }
+  .stage-list { list-style: none; margin: 0; padding: 0; position: relative; }
+  .stage-list::before {
+    content: ""; position: absolute; left: 6px; top: 10px; bottom: 10px;
+    width: 1px; background: var(--border);
+  }
+  .stage-list li {
+    position: relative;
+    padding: 0 0 18px 24px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .stage-list li:last-child { padding-bottom: 0; }
+  .stage-list li::before {
+    content: ""; position: absolute; left: 2px; top: 7px;
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--bg); border: 1.5px solid var(--border-strong);
+  }
+  .stage-list li.done { color: var(--muted); }
+  .stage-list li.done::before { background: var(--accent); border-color: var(--accent); }
+  .stage-list li.now { color: var(--fg); font-weight: 500; }
+  .stage-list li.now::before { background: var(--bg); border: 2px solid var(--warn); box-shadow: 0 0 0 3px color-mix(in oklab, var(--warn) 16%, transparent); }
+  .rail-meta { margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--border); font-size: 12px; color: var(--subtle); display: grid; gap: 6px; }
+  .rail-meta span { display: flex; justify-content: space-between; }
+  .rail-meta b { color: var(--fg); font-weight: 500; font-variant-numeric: tabular-nums; }
+
+  .doc {
+    overflow-y: auto;
+    padding: 18px 0 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .doc-toolbar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 0 28px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .doc-toolbar .grow { margin-left: auto; }
+  .page-paper {
+    flex: 1;
+    overflow-y: auto;
+    padding: 34px 48px 80px;
+  }
+  .paper-inner { max-width: 664px; margin: 0 auto; }
+  .paper-inner h2 {
+    font-family: var(--sans);
+    font-size: 24px;
+    line-height: 1.45;
+    font-weight: 600;
+    letter-spacing: -.01em;
+    margin-bottom: 6px;
+  }
+  .paper-meta { font-size: 12px; color: var(--subtle); margin-bottom: 26px; }
+  .manuscript {
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.95;
+    color: var(--fg);
+  }
+  .manuscript h3 {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: .02em;
+    margin: 30px 0 10px;
+  }
+  .manuscript p { margin: 0 0 14px; }
+  .cite {
+    color: var(--info);
+    font-size: 10px;
+    vertical-align: super;
+    cursor: help;
+    font-family: var(--sans);
+  }
+  .flag {
+    background: color-mix(in oklab, var(--warn) 16%, transparent);
+    border-left: 2px solid var(--warn);
+    padding: 0 2px;
+  }
+
+  /* ---------- inspector ---------- */
+  .inspector {
+    border-left: 1px solid var(--border);
+    background: var(--surface);
+    display: flex; flex-direction: column;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 14px;
+    gap: 10px;
+  }
+  .inspector.collapsed { display: none; }
+  .ins-tabs {
+    display: flex; gap: 2px;
+    padding: 2px;
+    background: var(--track);
+    border-radius: var(--r-md);
+  }
+  .ins-tabs button {
+    flex: 1; height: 26px; border: 0; border-radius: var(--r-sm);
+    background: none; cursor: pointer; font-size: 12px; color: var(--muted);
+  }
+  .ins-tabs button[aria-selected="true"] { background: var(--control); color: var(--fg); box-shadow: var(--shadow-1); font-weight: 500; }
+  .panel {
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    padding: 13px;
+    background: var(--raised);
+  }
+  .panel-head {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 12px; color: var(--muted);
+    margin-bottom: 10px;
+  }
+  .panel-title { font-size: 13px; font-weight: 500; color: var(--fg); }
+  .steps { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 7px; }
+  .steps li { display: flex; gap: 8px; align-items: baseline; font-size: 12px; color: var(--subtle); }
+  .steps li .st {
+    width: 14px; height: 14px; border-radius: 50%;
+    border: 1px solid var(--border-strong);
+    flex: none; display: grid; place-items: center;
+    font-size: 8px; color: var(--subtle);
+    transform: translateY(2px);
+  }
+  .steps li.done .st { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+  .steps li.now { color: var(--fg); }
+  .steps li.now .st { border-color: var(--warn); color: var(--warn); }
+  .breath {
+    width: 6px; height: 6px; border-radius: 50%; background: var(--warn);
+    animation: breathe 1.8s ease-in-out infinite;
+  }
+  @keyframes breathe { 0%,100% { opacity: .35; } 50% { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .breath { animation: none; opacity: 1; } }
+
+  .cost-row {
+    display: flex; justify-content: space-between;
+    font-size: 12px; color: var(--subtle);
+    margin-top: 10px; padding-top: 10px;
+    border-top: 1px solid var(--border);
+  }
+  .cost-row b { color: var(--fg); font-family: var(--mono); font-weight: 500; }
+
+  .decision {
+    border: 1px solid color-mix(in oklab, var(--warn) 40%, var(--border));
+    background: color-mix(in oklab, var(--warn) 7%, var(--surface));
+  }
+  .decision .panel-title { display: flex; align-items: center; gap: 6px; }
+  .decision p { margin: 4px 0 10px; font-size: 12px; color: var(--muted); line-height: 1.6; }
+  .decision .quote {
+    font-family: var(--serif); font-size: 12.5px; color: var(--fg);
+    border-left: 2px solid var(--border-strong); padding-left: 8px; margin: 0 0 10px;
+  }
+  .decision-actions { display: flex; gap: 6px; }
+
+  /* ---------- run dock ---------- */
+  .dock {
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+    display: flex; align-items: center; gap: 14px;
+    padding: 0 16px;
+    height: 40px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .dock .track {
+    flex: 1; height: 2px; background: var(--border); border-radius: 1px; overflow: hidden;
+  }
+  .dock .track i { display: block; height: 100%; width: 43%; background: var(--accent); }
+  .dock b { color: var(--fg); font-weight: 500; }
+  .dock .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+  /* ---------- approvals ---------- */
+  .appr-list { display: grid; gap: 10px; max-width: 880px; }
+  .appr {
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    background: var(--surface);
+    padding: 15px 16px;
+    display: grid;
+    gap: 8px;
+  }
+  .appr.risk-high { border-left: 3px solid var(--danger); }
+  .appr.risk-mid { border-left: 3px solid var(--warn); }
+  .appr-top { display: flex; align-items: center; gap: 8px; }
+  .appr-top .when { margin-left: auto; font-size: 11px; color: var(--subtle); }
+  .appr-body { font-size: 13px; color: var(--muted); }
+  .appr-body code {
+    font-family: var(--mono); font-size: 12px;
+    background: var(--track); padding: 1px 5px; border-radius: var(--r-sm);
+  }
+  .appr-actions { display: flex; gap: 8px; justify-content: flex-end; }
+
+  /* ---------- settings ---------- */
+  .settings { display: grid; grid-template-columns: 168px minmax(0, 1fr); gap: 28px; max-width: 980px; }
+  .set-nav { display: grid; gap: 2px; align-content: start; }
+  .set-nav button {
+    height: 30px; text-align: left; padding: 0 9px;
+    border: 0; border-radius: var(--r-md); background: none;
+    color: var(--muted); cursor: pointer; font-size: 13px;
+  }
+  .set-nav button[aria-current="true"] { background: var(--selected); color: var(--fg); font-weight: 500; }
+  .provider {
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    background: var(--surface);
+    padding: 14px 16px;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .provider + .provider { margin-top: 8px; }
+  .provider .name { font-weight: 500; }
+  .provider .meta { font-size: 12px; color: var(--subtle); margin-top: 2px; }
+  .provider .right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+  .price { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .matrix {
+    margin-top: 20px;
+    border: 1px solid var(--border); border-radius: var(--r-lg);
+    background: var(--surface); overflow: hidden;
+  }
+  .matrix-row {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+    padding: 10px 14px; font-size: 13px; align-items: center;
+  }
+  .matrix-row + .matrix-row { border-top: 1px solid var(--border); }
+  .matrix-head { background: var(--track); font-size: 11px; color: var(--muted); }
+
+  /* ---------- empty / misc ---------- */
+  .hint { font-size: 12px; color: var(--subtle); }
+  .kbd {
+    font-family: var(--mono); font-size: 11px;
+    border: 1px solid var(--border-strong); border-bottom-width: 2px;
+    border-radius: var(--r-sm); padding: 1px 5px; color: var(--muted);
+  }
+  [hidden] { display: none !important; }
+
+  /* ---------- responsive ---------- */
+  @media (max-width: 1280px) {
+    .chip.model { display: none; }
+    .shell, .shell.no-inspector { grid-template-columns: var(--nav-w) 1fr; }
+    .inspector {
+      position: fixed;
+      top: 44px; right: 0; bottom: 40px;
+      width: 336px;
+      z-index: 30;
+      display: flex !important;
+      box-shadow: var(--shadow-3);
+      transform: translateX(102%);
+      transition: transform 180ms cubic-bezier(.2, 0, 0, 1);
+      border-left: 1px solid var(--border-strong);
+    }
+    .shell.inspector-open .inspector { transform: none; }
+    .inspector.collapsed { display: flex !important; }
+  }
+  @media (max-width: 1100px) {
+    :root { --nav-w: 196px; }
+    .wordmark-sub { display: none; }
+  }
+  @media (max-width: 1000px) {
+    :root { --nav-w: 60px; }
+    .crumb > span:first-child, .crumb > span:nth-child(2) { display: none; }
+    .ws { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+    .rail {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      border-right: 0;
+      border-bottom: 1px solid var(--border);
+      padding: 10px 20px;
+      overflow-x: auto;
+      overflow-y: hidden;
+    }
+    .rail-title, .rail-meta { display: none; }
+    .stage-list { display: flex; gap: 20px; }
+    .stage-list::before { display: none; }
+    .stage-list li { padding: 0 0 0 16px; white-space: nowrap; font-size: 12px; }
+    .stage-list li::before { top: 5px; left: 0; width: 8px; height: 8px; }
+    .page-paper { padding: 26px 28px 60px; }
+    .nav-label { display: none; }
+    .nav-item {
+      justify-content: center;
+      padding: 0;
+      font-size: 0;
+    }
+    .nav-item .nav-icon { font-size: 15px; width: auto; }
+    .nav-count { display: none; }
+    .wordmark-sub { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .inspector { transition: none; }
+  }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">跳到主内容</a>
+<div class="app">
+
+  <!-- ============ TOP BAR ============ -->
+  <header class="topbar">
+    <div class="brand">
+      <span class="wordmark">稿台</span>
+      <span class="wordmark-sub">创作制片台</span>
+    </div>
+    <div class="crumb" id="crumb">
+      <span>项目</span>
+    </div>
+    <div class="topbar-right">
+      <button class="chip" id="modeChip" title="切换本地 / 本地+云端模式"><span class="dot"></span>本地<span aria-hidden="true" style="color:var(--subtle)">⌄</span></button>
+      <span class="chip model">GPT-5 · <span class="price">¥1.84</span> / ¥5.00</span>
+      <button class="icon-btn" id="themeBtn" title="切换主题">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6L17 7M7 17l-1.4 1.4"/><circle cx="12" cy="12" r="4"/></svg>
+      </button>
+      <button class="icon-btn" id="inspectorBtn" title="切换检查器">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg>
+      </button>
+      <span class="avatar">林</span>
+    </div>
+  </header>
+
+  <!-- ============ SHELL ============ -->
+  <div class="shell" id="shell">
+
+    <!-- ============ SIDE NAV ============ -->
+    <nav class="sidenav">
+      <div class="nav-group">
+        <div class="nav-label">工作</div>
+        <button class="nav-item" data-go="projects" title="项目" aria-current="true">
+          <span class="nav-icon" aria-hidden="true">▤</span>项目
+        </button>
+        <button class="nav-item" data-go="runs" title="任务">
+          <span class="nav-icon" aria-hidden="true">◷</span>任务
+        </button>
+        <button class="nav-item" data-go="approvals" title="待办">
+          <span class="nav-icon" aria-hidden="true">◑</span>待办<span class="nav-count">3</span>
+        </button>
+      </div>
+      <div class="nav-group">
+        <div class="nav-label">资产</div>
+        <button class="nav-item" data-go="library" title="资料库"><span class="nav-icon" aria-hidden="true">▧</span>资料库</button>
+        <button class="nav-item" data-go="automations" title="自动化"><span class="nav-icon" aria-hidden="true">◔</span>自动化</button>
+      </div>
+      <div class="nav-foot">
+        <button class="nav-item" data-go="settings" title="设置"><span class="nav-icon" aria-hidden="true">⚙</span>设置</button>
+        <button class="nav-item" data-go="help" title="帮助"><span class="nav-icon" aria-hidden="true">?</span>帮助</button>
+      </div>
+    </nav>
+
+    <!-- ============ MAIN ============ -->
+    <main class="main" id="main" tabindex="-1">
+
+      <!-- ---------- projects ---------- -->
+      <section data-page="projects">
+        <div class="page-head">
+          <div>
+            <h1 class="page-title">项目</h1>
+            <div class="page-sub">8 个进行中 · 2 个等待你确认</div>
+          </div>
+          <div class="spacer"></div>
+          <button class="btn">导入文档</button>
+          <button class="btn primary">新建项目</button>
+        </div>
+
+        <div class="board-toolbar">
+          <div class="segmented">
+            <button aria-pressed="true">全部</button>
+            <button aria-pressed="false">进行中</button>
+            <button aria-pressed="false">待审</button>
+            <button aria-pressed="false">已完成</button>
+          </div>
+          <div class="search">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            <input class="input" placeholder="搜索项目、脚本、引用" />
+          </div>
+          <div style="margin-left:auto" class="hint">按最近更新排序 · <span class="kbd">⌘K</span></div>
+        </div>
+
+        <div class="ledger">
+          <div class="ledger-head">
+            <span>项目</span><span>阶段</span><span>产物</span><span>花费</span><span>更新</span>
+          </div>
+
+          <div class="ledger-row" data-go="workspace">
+            <div>
+              <div class="proj-title">为什么 AI 编程正在杀死初级开发者 <span class="badge warn">待你确认</span></div>
+              <div class="proj-sub">B站 · 科技区 · 12:40</div>
+            </div>
+            <div class="stages" title="脚本（5/8）">
+              <i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i class="now"></i><i></i><i></i><i></i>
+            </div>
+            <div class="num">12</div>
+            <div class="num">¥1.84</div>
+            <div class="hint">2 小时前</div>
+          </div>
+
+          <div class="ledger-row">
+            <div>
+              <div class="proj-title">三体里的物理学，哪些是真的</div>
+              <div class="proj-sub">B站 · 知识区 · 18:20</div>
+            </div>
+            <div class="stages"><i class="done"></i><i class="done"></i><i class="now"></i><i></i><i></i><i></i><i></i><i></i></div>
+            <div class="num">8</div>
+            <div class="num">¥0.62</div>
+            <div class="hint">昨天</div>
+          </div>
+
+          <div class="ledger-row">
+            <div>
+              <div class="proj-title">2026 年还值得买的五个开发工具</div>
+              <div class="proj-sub">YouTube · Tech · 09:10</div>
+            </div>
+            <div class="stages"><i class="done"></i><i class="now"></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+            <div class="num">2</div>
+            <div class="num">¥0.11</div>
+            <div class="hint">3 天前</div>
+          </div>
+
+          <div class="ledger-row">
+            <div>
+              <div class="proj-title">我用三个月复刻了一台 1984 年的电脑</div>
+              <div class="proj-sub">B站 · 生活区 · 22:05</div>
+            </div>
+            <div class="stages"><i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i></div>
+            <div class="num">31</div>
+            <div class="num">¥4.27</div>
+            <div class="hint">上周</div>
+          </div>
+        </div>
+
+        <div class="section-note">
+          <div><b>6</b>本月完成</div>
+          <div><b>¥12.40</b>本月花费 / ¥50.00</div>
+          <div><b>41h</b>估算节省</div>
+          <div style="margin-left:auto; align-self:flex-end">进度按阶段计算，不按字数 —— 写得多不等于推进得快</div>
+        </div>
+      </section>
+
+      <!-- ---------- workspace ---------- -->
+      <section data-page="workspace" hidden style="display:flex; flex:1; min-height:0;">
+        <div class="ws">
+          <aside class="rail">
+            <div class="rail-title">阶段</div>
+            <ol class="stage-list">
+              <li class="done">选题</li>
+              <li class="done">资料</li>
+              <li class="now">脚本</li>
+              <li>分镜</li>
+              <li>包装</li>
+              <li>发布</li>
+              <li>复盘</li>
+            </ol>
+            <div class="rail-meta">
+              <span>产物 <b>12</b></span>
+              <span>引用 <b>34</b></span>
+              <span>版本 <b>v3</b></span>
+            </div>
+          </aside>
+
+          <div class="doc">
+            <div class="doc-toolbar">
+              <button class="btn sm">v3 ▾</button>
+              <button class="btn sm">对比 v2</button>
+              <button class="btn sm">事实核查</button>
+              <span class="grow"></span>
+              <span class="hint">朗读时长 12:40</span>
+              <button class="btn sm">导出</button>
+            </div>
+
+            <div class="page-paper">
+              <div class="paper-inner">
+                <h2>为什么 AI 编程正在杀死初级开发者</h2>
+                <div class="paper-meta">脚本 v3 · 已保存 14:31 · 4,280 字</div>
+                <div class="manuscript">
+                  <h3>一、开场：一个反直觉的事实</h3>
+                  <p>2026 年春招，某大厂放出的开发岗里，明确写「应届」的只有 <span class="flag">不到三成</span>，而这个数字在 2023 年还是七成。<span class="cite">[1]</span></p>
+                  <p>与此同时，同一家公司把 AI 编程助手的采购预算翻了四倍。这两件事放在一起，不用什么阴谋论，结论已经很清楚。</p>
+
+                  <h3>二、为什么最先消失的是初级岗</h3>
+                  <p>不是因为 AI 比人聪明，而是因为初级工作的本质是「把明确的需求翻译成代码」。这恰好是当前模型最擅长的部分。</p>
+                  <p>而高级工程师的工作里，有大半时间在判断「这个需求本身对不对」「这个改动会不会在三个月后爆炸」。这些判断依赖上下文、责任和后果，模型暂时接不住。</p>
+
+                  <h3>三、被高估的三个能力</h3>
+                  <p>过去两年，招聘市场上被反复强调的是框架熟练度、算法题速度、以及「能快速上手」。这三样，恰好都是 AI 最容易替代的。</p>
+                  <p>真正稀缺的东西反而没人教：怎么把一个模糊的问题拆成可验证的小问题，怎么在信息不足时做决策，怎么为一次上线负责。</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------- approvals ---------- -->
+      <section data-page="approvals" hidden>
+        <div class="page-head">
+          <div>
+            <h1 class="page-title">待办</h1>
+            <div class="page-sub">3 项等待你决定 · 危险操作永不批量批准</div>
+          </div>
+        </div>
+
+        <div class="appr-list">
+          <article class="appr risk-high">
+            <div class="appr-top">
+              <span class="badge danger">删除</span>
+              <span class="badge">高风险</span>
+              <span class="when">2 分钟前</span>
+            </div>
+            <div class="appr-body">
+              项目「为什么 AI 编程正在杀死初级开发者」 · Agent: Editor<br />
+              将删除 <code>workspace/raw/old-take.mp4</code>（1.2 GB），原因：检测到重复素材，已用新版本替换。
+            </div>
+            <div class="appr-actions">
+              <button class="btn sm">查看详情</button>
+              <button class="btn sm">拒绝</button>
+              <button class="btn sm danger">批准删除</button>
+            </div>
+          </article>
+
+          <article class="appr risk-mid">
+            <div class="appr-top">
+              <span class="badge warn">预算</span>
+              <span class="badge">中风险</span>
+              <span class="when">18 分钟前</span>
+            </div>
+            <div class="appr-body">
+              项目「三体里的物理学」已完成 ¥4.62 / ¥5.00。继续将超出单项目上限，预计再花 ¥0.80。
+            </div>
+            <div class="appr-actions">
+              <button class="btn sm">终止任务</button>
+              <button class="btn sm">提高上限到 ¥8</button>
+              <button class="btn sm primary">批准继续</button>
+            </div>
+          </article>
+
+          <article class="appr">
+            <div class="appr-top">
+              <span class="badge info">写入</span>
+              <span class="badge">低风险</span>
+              <span class="when">1 小时前</span>
+            </div>
+            <div class="appr-body">
+              Agent 请求在工作区外写入 <code>D:\素材\2026\b-roll-index.md</code>，用于整理镜头清单。
+            </div>
+            <div class="appr-actions">
+              <button class="btn sm">拒绝</button>
+              <button class="btn sm primary">允许一次</button>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <!-- ---------- settings ---------- -->
+      <section data-page="settings" hidden>
+        <div class="page-head">
+          <div>
+            <h1 class="page-title">设置</h1>
+            <div class="page-sub">模型、设备、权限与预算</div>
+          </div>
+        </div>
+
+        <div class="settings">
+          <nav class="set-nav">
+            <button aria-current="true">模型</button>
+            <button>设备与连接</button>
+            <button>权限</button>
+            <button>预算</button>
+            <button>存储与隐私</button>
+          </nav>
+
+          <div>
+            <div class="provider">
+              <div>
+                <div class="name">OpenAI · gpt-5</div>
+                <div class="meta">用于脚本、包装 · 上下文 400k</div>
+              </div>
+              <div class="right">
+                <span class="badge ok">已连接</span>
+                <span class="price">¥18 / ¥72 每百万</span>
+                <button class="btn sm">测试</button>
+              </div>
+            </div>
+
+            <div class="provider">
+              <div>
+                <div class="name">Ollama · qwen3:14b</div>
+                <div class="meta">用于资料摘要、改写 · 本机运行</div>
+              </div>
+              <div class="right">
+                <span class="badge ok">运行中</span>
+                <span class="price">免费</span>
+                <button class="btn sm">测试</button>
+              </div>
+            </div>
+
+            <div class="matrix">
+              <div class="matrix-row matrix-head"><span>任务</span><span>模型</span></div>
+              <div class="matrix-row"><span>脚本、包装</span><span>OpenAI · gpt-5</span></div>
+              <div class="matrix-row"><span>资料摘要、改写</span><span>Ollama · qwen3:14b</span></div>
+              <div class="matrix-row"><span>事实核查</span><span>OpenAI · gpt-5</span></div>
+            </div>
+
+            <div style="margin-top:18px; display:flex; align-items:center; gap:10px">
+              <input class="input" style="max-width:280px" value="sk-••••••••••••••••7f3a" />
+              <span class="hint">密钥保存在系统钥匙串，不写入项目文件</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------- placeholder ---------- -->
+      <section data-page="runs" hidden>
+        <div class="page-head"><div><h1 class="page-title">任务</h1><div class="page-sub">全部运行记录</div></div></div>
+        <div class="ledger">
+          <div class="ledger-head" style="grid-template-columns:1fr 110px 90px 90px 90px"><span>任务</span><span>状态</span><span>耗时</span><span>花费</span><span>开始</span></div>
+          <div class="ledger-row" style="grid-template-columns:1fr 110px 90px 90px 90px"><div><div class="proj-title">写第三节初稿</div><div class="proj-sub">Scriptwriter · 为什么 AI 编程…</div></div><span class="badge ok">进行中</span><span class="num">3m 12s</span><span class="num">¥0.42</span><span class="hint">14:28</span></div>
+          <div class="ledger-row" style="grid-template-columns:1fr 110px 90px 90px 90px"><div><div class="proj-title">事实核查 v3</div><div class="proj-sub">Critic · 为什么 AI 编程…</div></div><span class="badge ok">完成</span><span class="num">1m 40s</span><span class="num">¥0.18</span><span class="hint">14:10</span></div>
+          <div class="ledger-row" style="grid-template-columns:1fr 110px 90px 90px 90px"><div><div class="proj-title">选题扫描</div><div class="proj-sub">Scout · 2026 年还值得买…</div></div><span class="badge danger">失败</span><span class="num">0m 22s</span><span class="num">¥0.03</span><span class="hint">昨天</span></div>
+        </div>
+      </section>
+
+      <section data-page="library" hidden>
+        <div class="page-head"><div><h1 class="page-title">资料库</h1><div class="page-sub">跨项目素材与资料卡</div></div></div>
+        <p class="hint">原型未展开此页。见 docs/COMPONENT-TREE.md P12。</p>
+      </section>
+
+      <section data-page="automations" hidden>
+        <div class="page-head"><div><h1 class="page-title">自动化</h1><div class="page-sub">定时任务与云端任务</div></div></div>
+        <p class="hint">原型未展开此页。见 docs/COMPONENT-TREE.md P13。</p>
+      </section>
+
+      <section data-page="help" hidden>
+        <div class="page-head"><div><h1 class="page-title">帮助</h1></div></div>
+        <p class="hint">原型未展开此页。</p>
+      </section>
+
+    </main>
+
+    <!-- ============ INSPECTOR ============ -->
+    <aside class="inspector" id="inspector">
+      <div class="ins-tabs" role="tablist" aria-label="检查器视图">
+        <button role="tab" aria-selected="true" tabindex="0">任务</button>
+        <button role="tab" aria-selected="false" tabindex="-1">来源</button>
+        <button role="tab" aria-selected="false" tabindex="-1">对话</button>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <span class="breath"></span>
+          <span class="panel-title">正在写第三节</span>
+          <span style="margin-left:auto" class="hint">3 / 7</span>
+        </div>
+        <ol class="steps">
+          <li class="done"><span class="st">✓</span>读取项目记忆与风格档案</li>
+          <li class="done"><span class="st">✓</span>对齐大纲第三节要点</li>
+          <li class="now"><span class="st">3</span>生成正文（约 900 字）</li>
+          <li><span class="st">4</span>引用挂载与事实标注</li>
+          <li><span class="st">5</span>风格一致性自检</li>
+          <li><span class="st">6</span>写入产物并建版本</li>
+          <li><span class="st">7</span>生成审阅摘要</li>
+        </ol>
+        <div class="cost-row"><span>本次花费</span><b>¥0.42</b></div>
+        <div style="display:flex; gap:6px; margin-top:10px">
+          <button class="btn sm" style="flex:1">暂停</button>
+          <button class="btn sm ghost" style="flex:1">取消</button>
+        </div>
+      </div>
+
+      <div class="panel decision">
+        <div class="panel-head">
+          <span class="panel-title">需要你决定</span>
+          <span style="margin-left:auto" class="badge warn">1</span>
+        </div>
+        <p>第四节的这处引述找不到来源，可能来自二手转述：</p>
+        <p class="quote">「2023 年校招名额下降了 40%」</p>
+        <div class="decision-actions">
+          <button class="btn sm">查看</button>
+          <button class="btn sm ghost">删除该句</button>
+          <button class="btn sm primary">保留</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><span class="panel-title">Agent 建议</span></div>
+        <p style="margin:0; font-size:12px; color:var(--muted); line-height:1.7">
+          第三节 4 分 12 秒，偏长。建议在「被高估的三个能力」处拆成两段，并补一个具体例子。
+        </p>
+        <div style="display:flex; gap:6px; margin-top:10px">
+          <button class="btn sm">拆分</button>
+          <button class="btn sm ghost">忽略</button>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- ============ RUN DOCK ============ -->
+  <footer class="dock" id="dock" role="status" aria-live="polite">
+    <span><b>正在运行</b> · Scriptwriter</span>
+    <span class="mono">步骤 3/7</span>
+    <span class="mono">¥0.42</span>
+    <div class="track"><i></i></div>
+    <span class="hint">关闭窗口也会继续</span>
+    <button class="btn sm">暂停</button>
+    <button class="btn sm ghost">取消</button>
+  </footer>
+</div>
+
+<script>
+  const pages = document.querySelectorAll('[data-page]');
+  const crumb = document.getElementById('crumb');
+  const shell = document.getElementById('shell');
+  const inspector = document.getElementById('inspector');
+  const dock = document.getElementById('dock');
+  const navItems = document.querySelectorAll('.nav-item');
+
+  const labels = {
+    projects: ['项目'],
+    workspace: ['项目', '为什么 AI 编程正在杀死初级开发者', '脚本'],
+    approvals: ['待办'],
+    settings: ['设置', '模型'],
+    runs: ['任务'],
+    library: ['资料库'],
+    automations: ['自动化'],
+    help: ['帮助']
+  };
+
+  const inspectorPages = new Set(['workspace']);
+  const dockPages = new Set(['workspace']);
+  const navFor = { workspace: 'projects' };
+
+  function renderCrumbs(name) {
+    const parts = labels[name] || ['项目'];
+    crumb.innerHTML = parts.map((p, i) =>
+      i === parts.length - 1 ? `<b>${p}</b>` : `<span>${p}</span><span class="sep">›</span>`
+    ).join('');
+  }
+
+  function go(name, updateHash = true) {
+    pages.forEach(p => {
+      const match = p.dataset.page === name;
+      p.hidden = !match;
+      if (match) p.style.display = p.dataset.page === 'workspace' ? 'flex' : '';
+    });
+    const activeNav = navFor[name] || name;
+    navItems.forEach(n => n.setAttribute('aria-current', String(n.dataset.go === activeNav)));
+    renderCrumbs(name);
+    inspector.classList.toggle('collapsed', !inspectorPages.has(name));
+    shell.classList.toggle('no-inspector', !inspectorPages.has(name));
+    const wide = !window.matchMedia('(max-width: 1280px)').matches;
+    if (inspectorPages.has(name) && wide) shell.classList.add('inspector-open');
+    else shell.classList.remove('inspector-open');
+    dock.hidden = !dockPages.has(name);
+    document.getElementById('main').classList.toggle('flush', name === 'workspace');
+    if (updateHash) {
+      const prefix = document.documentElement.dataset.theme === 'dark' ? 'dark/' : '';
+      history.replaceState(null, '', '#' + prefix + name);
+    }
+  }
+
+  document.addEventListener('click', (e) => {
+    const target = e.target.closest('[data-go]');
+    if (!target) return;
+    go(target.dataset.go);
+  });
+
+  document.getElementById('themeBtn').addEventListener('click', () => {
+    const html = document.documentElement;
+    const dark = html.dataset.theme !== 'dark';
+    html.dataset.theme = dark ? 'dark' : 'light';
+    const current = document.querySelector('[data-page]:not([hidden])');
+    if (current) history.replaceState(null, '', '#' + (dark ? 'dark/' : '') + current.dataset.page);
+  });
+
+  const tablist = document.querySelector('.ins-tabs');
+  function selectTab(btn) {
+    tablist.querySelectorAll('[role=tab]').forEach(t => {
+      const on = t === btn;
+      t.setAttribute('aria-selected', String(on));
+      t.tabIndex = on ? 0 : -1;
+    });
+    btn.focus();
+  }
+  tablist.addEventListener('click', e => {
+    const t = e.target.closest('[role=tab]');
+    if (t) selectTab(t);
+  });
+  tablist.addEventListener('keydown', e => {
+    const tabs = [...tablist.querySelectorAll('[role=tab]')];
+    const i = tabs.indexOf(document.activeElement);
+    if (i < 0) return;
+    let next = null;
+    if (e.key === 'ArrowRight') next = tabs[(i + 1) % tabs.length];
+    if (e.key === 'ArrowLeft') next = tabs[(i - 1 + tabs.length) % tabs.length];
+    if (e.key === 'Home') next = tabs[0];
+    if (e.key === 'End') next = tabs[tabs.length - 1];
+    if (next) { e.preventDefault(); selectTab(next); }
+  });
+
+  document.getElementById('inspectorBtn').addEventListener('click', () => {
+    if (window.matchMedia('(max-width: 1280px)').matches) {
+      shell.classList.toggle('inspector-open');
+      return;
+    }
+    const hidden = inspector.classList.toggle('collapsed');
+    shell.classList.toggle('no-inspector', hidden);
+  });
+
+  const raw = location.hash.replace('#', '');
+  const [maybeTheme, maybePage] = raw.includes('/') ? raw.split('/') : [raw, ''];
+  if (maybeTheme === 'dark') {
+    document.documentElement.dataset.theme = 'dark';
+    go(labels[maybePage] ? maybePage : 'projects', false);
+  } else {
+    go(labels[raw] ? raw : 'projects', false);
+  }
+
+  if (window.matchMedia('(max-width: 1280px)').matches) {
+    shell.classList.remove('inspector-open');
+  }
+</script>
+</body>
+</html>

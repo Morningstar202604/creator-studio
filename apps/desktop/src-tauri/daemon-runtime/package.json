@@ -1,0 +1,16 @@
+{
+  "name": "creator-studio-daemon",
+  "version": "0.1.0",
+  "type": "module",
+  "dependencies": {
+    "fastify": "5.12.7",
+    "better-sqlite3": "13.0.3",
+    "@fastify/cors": "11.3.1",
+    "zod": "3.25.76",
+    "@creator-studio/protocol": "file:./node_modules/@creator-studio/protocol",
+    "@creator-studio/model-gateway": "file:./node_modules/@creator-studio/model-gateway",
+    "@creator-studio/tools": "file:./node_modules/@creator-studio/tools",
+    "@creator-studio/agent-core": "file:./node_modules/@creator-studio/agent-core",
+    "@creator-studio/store-sqlite": "file:./node_modules/@creator-studio/store-sqlite"
+  }
+}

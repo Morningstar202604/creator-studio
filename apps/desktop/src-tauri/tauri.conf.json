@@ -1,0 +1,50 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "CreatorStudio",
+  "version": "0.1.0",
+  "identifier": "app.creatorstudio.desktop",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "稿台",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 900,
+        "minHeight": 700,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:7878; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "icon": [
+      "icons/icon.ico"
+    ],
+    "resources": [
+      "daemon-runtime/**/*"
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": [
+          "SimpChinese",
+          "English"
+        ]
+      }
+    },
+    "shortDescription": "稿台 · 创作者的 AI 制片台",
+    "longDescription": "本地优先的创作者 AI 工作台：选题、资料、脚本、包装、发布包一站式完成，素材不出本机。"
+  }
+}

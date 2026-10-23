@@ -1,0 +1,23 @@
+{
+  "name": "@creator-studio/cloud",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@creator-studio/protocol": "workspace:*",
+    "ws": "8.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.18.13",
+    "@types/ws": "8.18.2",
+    "typescript": "5.9.3",
+    "vitest": "3.2.7"
+  }
+}
