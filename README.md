@@ -118,14 +118,14 @@ node apps/cli/dist/main.js publish <projectId>
 ```
 apps/
   desktop/   React 19 + Vite + Tauri 2（HashRouter，兼顾 tauri:// 与 http://）
-  daemon/    Fastify 5：51 条路由、SSE、静态托管、调度器、密钥库
+  daemon/    Fastify 5：50 条路由、SSE、静态托管、调度器、密钥库
   cloud/     云端控制面（配对 / 隧道 / 配额 / 计费，内存实现）
   cli/       cs 命令：与界面同一套 API
 packages/
   protocol/       实体 schema、不变量、Agent Link 帧、产物契约与容错矫正
   tools/          路径沙箱（realpath 防符号链接）、授权判定、审批门、审计、注入围栏
   model-gateway/  OpenAI / Anthropic 适配器、SSE 解析、预算预检、退避重试、脱敏
-  store-sqlite/   6 个迁移、11 张表、仓储（Run/Project/Artifact/Settings/Automation/Metrics）
+  store-sqlite/   6 个迁移、15 张表、仓储（Run/Project/Artifact/Settings/Automation/Metrics）
   agent-core/     Agent 循环、工具回灌、审批暂停与恢复、转录落盘
 ```
 
