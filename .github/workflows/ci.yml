@@ -15,21 +15,26 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
+
       - uses: pnpm/action-setup@v4
         with:
           version: 12.11.2
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - run: pnpm install --frozen-lockfile
-      - run: pnpm -r typecheck
-      - run: pnpm -r test
-      - run: pnpm -r build
-      - name: Security audit
-        run: node scripts/security-audit.mjs
-      - name: Contrast audit
-        run: python scripts/check-contrast.py
+
+      # One command for the whole gate. It builds first because workspace packages
+      # resolve each other through emitted dist/*.d.ts, which are not committed.
+      - name: Verify (build → typecheck → test → audits)
+        run: pnpm verify
 
   desktop:
     name: desktop bundle (windows)
@@ -37,21 +42,29 @@ jobs:
     needs: verify
     steps:
       - uses: actions/checkout@v4
+
       - uses: pnpm/action-setup@v4
         with:
           version: 12.11.2
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
+
       - uses: dtolnay/rust-toolchain@stable
+
       - run: pnpm install --frozen-lockfile
+
       - run: pnpm -r build
+
       - name: Stage daemon runtime
         run: node scripts/install-daemon-deps.mjs
+
       - name: Build installer
         working-directory: apps/desktop
         run: pnpm tauri build
+
       - uses: actions/upload-artifact@v4
         with:
           name: creator-studio-nsis

@@ -8,8 +8,10 @@
   },
   "scripts": {
     "build": "pnpm -r build",
-    "test": "pnpm -r test",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r build && pnpm -r typecheck",
+    "test": "pnpm -r build && pnpm -r test",
+    "verify": "pnpm -r build && pnpm -r typecheck && pnpm -r test && node scripts/security-audit.mjs && python scripts/check-contrast.py",
+    "e2e": "node scripts/smoke-e2e.mjs"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
