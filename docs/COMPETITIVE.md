@@ -61,6 +61,9 @@
 | 可复现发布包 | MoneyPrinterTurbo | zip 内含 `manifest.json`（每文件 sha256 + 导出时间） | `apps/daemon/test/publish.test.ts` |
 | 定时自动化 | khoj | `automations` 表 + daemon 内置调度器（30s 检查）+ 手动「立即运行」 | `apps/daemon/test/features.test.ts` R5 |
 | 跨项目资料库 | khoj / open-webui | `/v1/library` 聚合 + 类型筛选 + 预览 | R6 测试 |
+| 本地混合检索 | khoj / open-webui | `memory_chunks` + FTS5 trigram + 向量余弦 + RRF；离线 n-gram 嵌入，可选模型 `/embeddings` | `packages/store-sqlite/test/memory-index.test.ts` 17 例；`apps/daemon/test/embedding.test.ts` 2 例 |
+| 生成时记忆注入 | khoj | 检索本项目切片，`fenceUntrusted` 包裹后与上游产物并列 | R9 注入断言（检查上游收到的 prompt） |
+| 多租户隔离 | Dify / open-webui | 云端 store 作用域访问器 + 跨租户 404 + 安全事件 + Run 降级 | `apps/cloud/test/cloud.test.ts` R8 五例 |
 | 结构化输出失败自愈 | — | 容错矫正（字符串数字 / 单值转数组 / 嵌套包装）+ 一次带示例的纠正重试 | `packages/protocol/src/artifacts.ts` `coerceByKind`；真实模型验证 |
 
 ## 5. 明确不做（与对标产品划清边界）
@@ -76,7 +79,8 @@
 | 差距 | 现状 | 后续路径 |
 |---|---|---|
 | 云端多租户与 Postgres | `apps/cloud` 为单机内存实现 | 换 `Store` 实现；`/v1/tool` 与轮换语义已按多租户预留 |
-| 向量检索 / 语义记忆 | 未实现，靠上游产物拼接上下文 | 引入 SQLite FTS5 + embedding 列，`artifact.source_hash` 增量重建 |
+| 神经语义检索 | 已实现检索管线（FTS5 + 向量 + RRF）；默认嵌入是离线 n-gram 哈希，属词法匹配 | 在设置里选择支持 `/embeddings` 的模型即可切到神经向量，切换后自动重建 |
+| 真实模型嵌入验证 | 用假供应商（同时提供 chat 与 embeddings）验证了代码路径 | 用真实 embedding 模型跑一次 `scripts/smoke-e2e.mjs` 的可选分支 |
 | 崩溃后自动续跑 | 重启把 running 标记为 `INTERRUPTED`，可人工 resume | 调度器自动挑选可重放 Run |
 | 跨平台产物构建 | 只在本机 Windows 验证 | GitHub Actions 三平台矩阵（工作流见 `.github/workflows/ci.yml`） |
 | 真人效率评测 | 「8 小时 → 2 小时」未实测 | 5 人 × 3 期陪跑计时 |
