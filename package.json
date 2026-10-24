@@ -1,7 +1,7 @@
 {
   "name": "creator-studio",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.2.0",
   "packageManager": "pnpm@12.11.2",
   "engines": {
     "node": ">=22"
@@ -15,5 +15,27 @@
     "onlyBuiltDependencies": [
       "esbuild"
     ]
-  }
+  },
+  "description": "本地优先的创作者 AI 制片台：选题、资料、脚本、分镜、包装、发布包、复盘一条流水线",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Morningstar202604/creator-studio.git"
+  },
+  "homepage": "https://github.com/Morningstar202604/creator-studio#readme",
+  "bugs": {
+    "url": "https://github.com/Morningstar202604/creator-studio/issues"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "creator",
+    "video",
+    "local-first",
+    "tauri",
+    "electron-alternative",
+    "content-creation",
+    "workflow",
+    "llm"
+  ]
 }
