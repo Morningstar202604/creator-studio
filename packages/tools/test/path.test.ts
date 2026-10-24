@@ -123,20 +123,28 @@ describe('R4 non-existent target under a short-name root', () => {
   it('accepts a deep new file when the root needs canonicalisation', () => {
     // Regression: on Windows CI the temp root is an 8.3 short path while realpath
     // returns the long form, so comparing the unresolved path with the real root
-    // rejected legitimate new files.
-    const fakeRoot = process.platform === 'win32' ? 'C:/PROGRA~1/ws' : '/tmp/ws-short';
-    const fakeReal = process.platform === 'win32' ? 'C:/Program Files/ws' : '/tmp/ws-real';
+    // rejected legitimate new files. The fake filesystem models that: the root and
+    // `script` exist, deeper segments do not.
+    const shortRoot = join(tmpdir(), 'ws-shortname-8.3');
+    const longRoot = join(tmpdir(), 'ws-long-name');
+    const norm = (value: string): string => value.replace(/[\/]+/g, '/').toLowerCase();
+    const shortNorm = norm(shortRoot);
+    const longNorm = norm(longRoot);
+
+    const resolveFake = (path: string): string => {
+      const normalized = norm(path);
+      const mapped = normalized.startsWith(shortNorm)
+        ? longNorm + normalized.slice(shortNorm.length)
+        : normalized;
+      if (mapped === longNorm || mapped === `${longNorm}/script`) return mapped;
+      const error = new Error('ENOENT') as NodeJS.ErrnoException;
+      error.code = 'ENOENT';
+      throw error;
+    };
+
     const result = resolveInsideWorkspace('script/new/deep.md', {
-      workspaceRoot: fakeRoot,
-      realpath: (path) => {
-        if (path.toLowerCase().endsWith('progra~1/ws') || path.endsWith('ws-short')) return fakeReal;
-        if (path.toLowerCase().startsWith('c:/program files/ws') || path.startsWith('/tmp/ws-real')) {
-          const error = new Error('ENOENT') as NodeJS.ErrnoException;
-          error.code = 'ENOENT';
-          throw error;
-        }
-        return path;
-      },
+      workspaceRoot: shortRoot,
+      realpath: resolveFake,
     });
     expect(result).toContain('deep.md');
   });
@@ -153,6 +161,8 @@ describe('R4 non-existent target under a short-name root', () => {
 
   it('rejects a single leading backslash on POSIX too', () => {
     if (process.platform === 'win32') return;
-    expect(() => resolve('\server\share\file.txt')).toThrowError(/PATH_ESCAPE/);
+    // One leading backslash: a Windows root-relative or UNC path, never a
+    // workspace-relative path on any platform.
+    expect(() => resolve('\\server\\share\\file.txt')).toThrowError(/PATH_ESCAPE/);
   });
 });
