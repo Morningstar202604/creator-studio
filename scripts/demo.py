@@ -59,33 +59,31 @@ def main() -> int:
             page.screenshot(path=str(SHOTS / f"{name}.png"))
 
         page.goto(f"{args.base}/#/", wait_until="networkidle")
-        shot("23-demo-projects", 900)
-
         page.goto(f"{args.base}/#/p/{pid}", wait_until="networkidle")
-        shot("24-demo-workspace", 700)
+        
 
         page.goto(f"{args.base}/#/p/{pid}/topic", wait_until="networkidle")
-        shot("25-demo-topic", 800)
+        shot("23-topic-showcase", 800)
 
         page.goto(f"{args.base}/#/p/{pid}/script", wait_until="networkidle")
-        shot("26-demo-script", 800)
+        shot("24-script-showcase", 800)
 
         page.goto(f"{args.base}/#/p/{pid}/publish", wait_until="networkidle")
-        shot("27-demo-publish", 900)
+        shot("25-publish-showcase", 900)
 
         page.goto(f"{args.base}/#/p/{pid}/review", wait_until="networkidle")
-        shot("28-demo-review", 1600)
+        shot("26-review-showcase", 1600)
 
         # Theme switch through the real toggle so the state is what a user sees.
         page.evaluate("() => document.documentElement.dataset.theme = 'dark'")
-        shot("29-demo-review-dark", 500)
+        shot("27-review-showcase-dark", 500)
         page.evaluate("() => document.documentElement.dataset.theme = 'light'")
 
         page.goto(f"{args.base}/#/settings", wait_until="networkidle")
-        shot("30-demo-settings", 700)
+        shot("28-settings-showcase", 700)
 
         page.goto(f"{args.base}/#/automations", wait_until="networkidle")
-        shot("31-demo-automations", 600)
+        shot("29-automations-showcase", 600)
 
         if args.video:
             page.goto(f"{args.base}/#/", wait_until="networkidle")
