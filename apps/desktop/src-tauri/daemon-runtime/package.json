@@ -6,6 +6,7 @@
     "fastify": "5.12.7",
     "better-sqlite3": "13.0.3",
     "@fastify/cors": "11.3.1",
+    "@fastify/static": "10.1.7",
     "zod": "3.25.76",
     "@creator-studio/protocol": "file:./node_modules/@creator-studio/protocol",
     "@creator-studio/model-gateway": "file:./node_modules/@creator-studio/model-gateway",

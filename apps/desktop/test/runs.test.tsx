@@ -62,7 +62,7 @@ describe('R5 runs list', () => {
     await waitFor(() => {
       expect(screen.getByText('scriptwriter')).toBeTruthy();
     });
-    expect(screen.getByText('succeeded')).toBeTruthy();
+    expect(screen.getAllByText('成功').length).toBeGreaterThan(0);
     expect(screen.getByText('342')).toBeTruthy();
     expect(screen.getByText('run-abcd')).toBeTruthy();
   });
@@ -81,7 +81,7 @@ describe('R5 runs list', () => {
     await waitFor(() => {
       expect(screen.getByText('MODEL_AUTH')).toBeTruthy();
     });
-    expect(screen.getByText('failed')).toBeTruthy();
+    expect(screen.getAllByText('失败').length).toBeGreaterThan(0);
   });
 
   it('passes the selected status filter to the API', async () => {

@@ -1,42 +1,45 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type React from 'react';
 import { useParams } from 'react-router-dom';
 import { ApiError, api, type Artifact, type Project } from '../api';
 import { AppShell } from '../components/AppShell';
+import { ARTIFACT_LABELS, relativeTime } from '../lib/format';
 
 type StageConfig = {
-  kind: 'topic-card' | 'research-notes' | 'publish-pack';
+  kind: 'topic-card' | 'research-notes' | 'script' | 'shot-list' | 'publish-pack';
   title: string;
   placeholder: string;
   hint: string;
-  folder: string;
 };
 
-const STAGE: Record<'topic' | 'research' | 'package', StageConfig> = {
+const STAGE: Record<'topic' | 'research' | 'shotlist' | 'package', StageConfig> = {
   topic: {
     kind: 'topic-card',
     title: '选题',
     placeholder: '例如：AI 对初级程序员的影响',
     hint: '生成 3 个选题卡，按需求 / 竞争 / 差异 / 可讲性评分',
-    folder: 'topic/',
   },
   research: {
     kind: 'research-notes',
     title: '资料',
     placeholder: '例如：2026 年 AI 编程工具对校招的影响',
     hint: '生成可核查的事实要点与资料缺口',
-    folder: 'research/',
+  },
+  shotlist: {
+    kind: 'shot-list',
+    title: '分镜',
+    placeholder: '例如：按已保存的脚本拆 20 个镜头',
+    hint: '生成景别、画面、B-roll、上屏字幕与时长',
   },
   package: {
     kind: 'publish-pack',
     title: '包装',
     placeholder: '例如：一期 15 分钟讲 AI 与初级岗位的视频',
     hint: '生成标题候选、简介、标签、章节与封面文案',
-    folder: 'publish/',
   },
 };
 
-export function StagePage({ stage }: { stage: 'topic' | 'research' | 'package' }): React.ReactElement {
+export function StagePage({ stage }: { stage: 'topic' | 'research' | 'shotlist' | 'package' }): React.ReactElement {
   const { id = '' } = useParams<{ id: string }>();
   const config = STAGE[stage];
   const [project, setProject] = useState<Project | null>(null);
@@ -48,10 +51,7 @@ export function StagePage({ stage }: { stage: 'topic' | 'research' | 'package' }
 
   const load = useCallback(async () => {
     try {
-      const [projectResult, artifactResult] = await Promise.all([
-        api.getProject(id),
-        api.listArtifacts(id),
-      ]);
+      const [projectResult, artifactResult] = await Promise.all([api.getProject(id), api.listArtifacts(id)]);
       setProject(projectResult.project);
       const mine = artifactResult.artifacts.filter((artifact) => artifact.kind === config.kind);
       setArtifacts(mine);
@@ -94,6 +94,17 @@ export function StagePage({ stage }: { stage: 'topic' | 'research' | 'package' }
     }
   };
 
+  const blocks = useMemo(() => {
+    if (selected === null) return [];
+    return selected.content
+      .split(/^## /m)
+      .filter((block) => block.trim() !== '')
+      .map((block) => {
+        const [heading, ...rest] = block.split('\n');
+        return { heading: heading?.replace(/^\d+\.\s*/, '') ?? '', body: rest.join('\n').trim() };
+      });
+  }, [selected]);
+
   return (
     <AppShell
       title={
@@ -119,6 +130,7 @@ export function StagePage({ stage }: { stage: 'topic' | 'research' | 'package' }
       <div className="panel">
         <div className="panel-head">
           <span className="panel-title">让 Agent 生成</span>
+          <span className="hint">自动携带上游产物，结果按 schema 校验后才落盘</span>
         </div>
         <textarea
           className="input textarea"
@@ -131,7 +143,7 @@ export function StagePage({ stage }: { stage: 'topic' | 'research' | 'package' }
           <button className="btn primary" disabled={busy || context.trim() === ''} onClick={() => void run()}>
             {busy ? '生成中…' : '开始生成'}
           </button>
-          {busy && <span className="hint">模型输出需要几十秒，结果会先校验结构再落盘</span>}
+          {busy && <span className="hint">模型输出需要几十秒，失败会保留上一版</span>}
         </div>
       </div>
 
@@ -139,9 +151,24 @@ export function StagePage({ stage }: { stage: 'topic' | 'research' | 'package' }
         <section className="panel stage-content">
           <div className="panel-head">
             <span className="panel-title">{selected === null ? '最新结果' : selected.artifact.path}</span>
+            {selected !== null && (
+              <span className="hint">
+                {ARTIFACT_LABELS[selected.artifact.kind] ?? selected.artifact.kind} ·{' '}
+                {relativeTime(selected.artifact.createdAt)}
+              </span>
+            )}
           </div>
           {selected === null ? (
             <p className="hint">还没有生成过。上面输入方向后点「开始生成」。</p>
+          ) : config.kind === 'topic-card' ? (
+            <div className="topic-cards">
+              {blocks.map((block) => (
+                <article key={block.heading} className="topic-card">
+                  <h3>{block.heading}</h3>
+                  <pre className="output">{block.body}</pre>
+                </article>
+              ))}
+            </div>
           ) : (
             <pre className="output">{selected.content}</pre>
           )}
@@ -177,6 +204,10 @@ export function TopicPage(): React.ReactElement {
 
 export function ResearchPage(): React.ReactElement {
   return <StagePage stage="research" />;
+}
+
+export function ShotListPage(): React.ReactElement {
+  return <StagePage stage="shotlist" />;
 }
 
 export function PackagePage(): React.ReactElement {

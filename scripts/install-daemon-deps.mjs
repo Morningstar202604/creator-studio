@@ -28,7 +28,7 @@ const pkg = JSON.parse(readFileSync(join(root, 'apps', 'daemon', 'package.json')
 const deps = pkg.dependencies ?? {};
 // The copied workspace packages have their own third-party deps; declare them here
 // because npm only installs what the runtime package.json lists.
-const TRANSITIVE = { zod: '3.25.76', 'better-sqlite3': '13.0.3' };
+const TRANSITIVE = { zod: '3.25.76', 'better-sqlite3': '13.0.3', '@fastify/static': '10.1.7' };
 const external = {
   ...Object.fromEntries(Object.entries(deps).filter(([name]) => !name.startsWith('@creator-studio/'))),
   ...TRANSITIVE,

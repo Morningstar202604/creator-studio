@@ -2,6 +2,7 @@
 
 > 配套 `UI-SPEC.md`（布局与交互）与 `DESIGN-SYSTEM.md`（视觉 token）。本文定义每个页面的 DOM 层级、组件边界、数据依赖与状态归属，是前端拆任务与 code review 的依据。
 > 约定：组件名用 PascalCase；`▸` 表示可折叠；`⟨slot⟩` 表示由父级传入；`*` 表示 MVP 必须实现。
+> v0.2 实际实现：`AppShell` 内含 `TopBar`（预算/模型/待办/主题/命令面板）+ `SideNav`（待办角标）；页面级组件见 `apps/desktop/src/pages/`，与下文的差异以代码为准。
 
 ## 1. 分层约定
 

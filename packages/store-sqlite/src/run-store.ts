@@ -2,6 +2,7 @@ import type { Database } from 'better-sqlite3';
 import {
   ApprovalSchema,
   RunEventSchema,
+  type StoredMessage,
   RunSchema,
   StepSchema,
   assertNextRunEventSeq,
@@ -69,6 +70,19 @@ type ApprovalRow = {
   requested_at: string;
   decided_at: string | null;
   decided_by: string | null;
+  consumed_at: string | null;
+};
+
+type MessageRow = {
+  id: string;
+  run_id: string;
+  seq: number;
+  role: string;
+  content: string;
+  tool_call_id: string | null;
+  name: string | null;
+  tool_calls: string | null;
+  created_at: string;
 };
 
 function toRun(row: RunRow): Run {
@@ -139,7 +153,24 @@ function toApproval(row: ApprovalRow): Approval {
     requestedAt: row.requested_at,
     decidedAt: row.decided_at,
     decidedBy: row.decided_by,
+    consumedAt: row.consumed_at,
   });
+}
+
+function toMessage(row: MessageRow): StoredMessage {
+  return {
+    id: row.id,
+    runId: row.run_id,
+    seq: row.seq,
+    role: row.role as StoredMessage['role'],
+    content: row.content,
+    toolCallId: row.tool_call_id,
+    name: row.name,
+    toolCalls: row.tool_calls === null
+      ? null
+      : (JSON.parse(row.tool_calls) as StoredMessage['toolCalls']),
+    createdAt: row.created_at,
+  };
 }
 
 export class SqliteRunStore implements RunStore {
@@ -341,5 +372,41 @@ export class SqliteRunStore implements RunStore {
       .prepare('SELECT * FROM approvals WHERE run_id = ? ORDER BY requested_at ASC')
       .all(runId) as ApprovalRow[];
     return rows.map(toApproval);
+  }
+
+  appendMessage(message: StoredMessage): void {
+    this.db
+      .prepare(
+        `INSERT INTO run_messages (id, run_id, seq, role, content, tool_call_id, name, tool_calls, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        message.id,
+        message.runId,
+        message.seq,
+        message.role,
+        message.content,
+        message.toolCallId,
+        message.name,
+        message.toolCalls === null ? null : JSON.stringify(message.toolCalls),
+        message.createdAt,
+      );
+  }
+
+  listMessages(runId: string): StoredMessage[] {
+    const rows = this.db
+      .prepare('SELECT * FROM run_messages WHERE run_id = ? ORDER BY seq ASC')
+      .all(runId) as MessageRow[];
+    return rows.map(toMessage);
+  }
+
+  consumeApproval(approvalId: string): boolean {
+    const result = this.db
+      .prepare(
+        `UPDATE approvals SET consumed_at = ?
+         WHERE id = ? AND decision = 'approved' AND consumed_at IS NULL`,
+      )
+      .run(new Date().toISOString(), approvalId);
+    return result.changes > 0;
   }
 }

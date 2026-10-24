@@ -34,7 +34,25 @@ export interface RunStore {
   createApproval(approval: Approval): void;
   getApproval(approvalId: string): Approval | null;
   listApprovals(runId: string): Approval[];
+
+  /** Persisted transcript so an interrupted run can resume without replaying the model. */
+  appendMessage(message: StoredMessage): void;
+  listMessages(runId: string): StoredMessage[];
+  /** Marks an approval as consumed; returns false when it was already used. */
+  consumeApproval(approvalId: string): boolean;
 }
+
+export type StoredMessage = {
+  id: string;
+  runId: string;
+  seq: number;
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  content: string;
+  toolCallId: string | null;
+  name: string | null;
+  toolCalls: Array<{ id: string; name: string; argumentsJson: string }> | null;
+  createdAt: string;
+};
 
 export type SaveArtifactInput = {
   id: string;

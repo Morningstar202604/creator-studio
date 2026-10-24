@@ -46,12 +46,12 @@ describe('R5 approvals', () => {
   it('shows the empty state when nothing is pending', async () => {
     render(<App />);
     await waitFor(() => {
-      expect(screen.getByText('没有待办。')).toBeTruthy();
+      expect(screen.getByText('没有待办')).toBeTruthy();
     });
   });
 
   it('renders a pending delete approval with a high-risk marker', async () => {
-    mocked.listApprovals.mockResolvedValueOnce({
+    mocked.listApprovals.mockResolvedValue({
       approvals: [
         {
           id: 'ap1',
@@ -72,7 +72,7 @@ describe('R5 approvals', () => {
 
   it('calls decideApproval with approved and reloads', async () => {
     const user = userEvent.setup();
-    mocked.listApprovals.mockResolvedValueOnce({
+    mocked.listApprovals.mockResolvedValue({
       approvals: [
         {
           id: 'ap1',
@@ -97,7 +97,7 @@ describe('R5 approvals', () => {
 
   it('calls decideApproval with rejected', async () => {
     const user = userEvent.setup();
-    mocked.listApprovals.mockResolvedValueOnce({
+    mocked.listApprovals.mockResolvedValue({
       approvals: [
         {
           id: 'ap2',

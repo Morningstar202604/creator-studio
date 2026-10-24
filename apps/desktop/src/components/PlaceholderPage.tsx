@@ -17,7 +17,7 @@ export function PlaceholderPage({
       <div className="page-head">
         <div>
           <h1 className="page-title">{title}</h1>
-          <div className="page-sub">该页面尚未实现</div>
+          <div className="page-sub">页面不存在或尚未实现</div>
         </div>
       </div>
       <div className="panel">

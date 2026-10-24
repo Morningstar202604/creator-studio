@@ -55,8 +55,19 @@ export class SqliteArtifactStore implements ArtifactStore {
     private readonly workspaceRoot: string,
   ) {}
 
+  /**
+   * Artifact paths are project-relative (`script/script.v1.md`); on disk every
+   * project gets its own subtree so two projects cannot overwrite each other.
+   */
+  private projectRoot(projectId: string): string {
+    return `${this.workspaceRoot}/projects/${projectId}`;
+  }
+
   save(input: SaveArtifactInput): Artifact {
-    const absolute = resolveInsideWorkspace(input.path, { workspaceRoot: this.workspaceRoot });
+    // The sandbox resolves realpath, so the project root must exist before the
+    // path check runs (a fresh project has no directory yet).
+    mkdirSync(this.projectRoot(input.projectId), { recursive: true });
+    const absolute = resolveInsideWorkspace(input.path, { workspaceRoot: this.projectRoot(input.projectId) });
     const hash = sha256(input.content);
     const artifact: Artifact = {
       id: input.id,
@@ -107,7 +118,7 @@ export class SqliteArtifactStore implements ArtifactStore {
     const row = this.db.prepare('SELECT * FROM artifacts WHERE id = ?').get(artifactId) as ArtifactRow | undefined;
     if (row === undefined) return null;
     const artifact = toArtifact(row);
-    const absolute = join(this.workspaceRoot, artifact.path);
+    const absolute = join(this.workspaceRoot, 'projects', artifact.projectId, artifact.path);
     if (!existsSync(absolute)) throw new ArtifactCorruptError(`missing file for ${artifact.id}`);
     const content = readFileSync(absolute, 'utf8');
     if (sha256(content) !== artifact.sha256) {

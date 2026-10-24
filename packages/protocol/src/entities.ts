@@ -48,6 +48,8 @@ export const ProjectSchema = z.object({
   stage: ProjectStageSchema,
   workspacePath: z.string().min(1).nullable(),
   styleProfileId: z.string().min(1).nullable(),
+  description: z.string().max(500).default(''),
+  tags: z.array(z.string().min(1).max(24)).max(12).default([]),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   deletedAt: IsoDateTime.nullable(),
@@ -179,6 +181,7 @@ export const ApprovalSchema = z.object({
   requestedAt: IsoDateTime,
   decidedAt: IsoDateTime.nullable(),
   decidedBy: z.string().min(1).nullable(),
+  consumedAt: IsoDateTime.nullable().default(null),
 });
 export type Approval = z.infer<typeof ApprovalSchema>;
 

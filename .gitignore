@@ -6,3 +6,16 @@ dist/
 out/
 apps/desktop/src-tauri/target/
 apps/desktop/dist/
+apps/desktop/src-tauri/daemon-runtime/node_modules/
+apps/desktop/src-tauri/daemon-runtime/package-lock.json
+workbuddy/
+.workbuddy/
+docs/screenshots-legacy/
+*.tsbuildinfo
+.env
+.env.local
+secrets.json
+*.db
+*.db-wal
+*.db-shm
+apps/desktop/src-tauri/gen/

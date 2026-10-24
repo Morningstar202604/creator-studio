@@ -37,8 +37,8 @@ describe('R1 upstream context', () => {
       { kind: 'c', content: big },
       { kind: 'd', content: big },
     ]);
-    // 6000 char budget / 2000 per doc means at most three blocks.
-    expect(text.split('上游产物：').length - 1).toBeLessThanOrEqual(3);
+    // 8000 char budget / 2400 per doc means at most four blocks.
+    expect(text.split('上游产物：').length - 1).toBeLessThanOrEqual(4);
   });
 });
 

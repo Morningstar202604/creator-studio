@@ -8,6 +8,8 @@ export type Project = {
   stage: 'topic' | 'research' | 'script' | 'shotlist' | 'package' | 'published' | 'review';
   workspacePath: string | null;
   styleProfileId: string | null;
+  description?: string;
+  tags?: string[];
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
@@ -78,6 +80,7 @@ export type ModelInfo = {
   priceInPerM: number;
   priceOutPerM: number;
   isLocal: boolean;
+  keyConfigured?: boolean;
 };
 
 export type GrantInfo = { id: string; deviceId: string; tool: string; scope: string; mode: string };
@@ -92,6 +95,7 @@ export type ChecklistItem = {
   ok: boolean;
   detail: string;
   stage: string;
+  required?: boolean;
 };
 
 export type Artifact = {
@@ -107,7 +111,23 @@ export type Artifact = {
   createdAt: string;
 };
 
-const BASE = import.meta.env.VITE_DAEMON_URL ?? 'http://127.0.0.1:7878';
+function resolveBase(): string {
+  const explicit = import.meta.env.VITE_DAEMON_URL as string | undefined;
+  if (explicit !== undefined && explicit !== '') return explicit;
+  // Served by the daemon itself (web mode): talk to the same origin so a custom
+  // --port works without rebuilding. The Tauri shell loads from tauri.localhost
+  // (a pseudo-origin with no HTTP server) and keeps the loopback default.
+  if (typeof window !== 'undefined') {
+    const { protocol, hostname, origin } = window.location;
+    const isLocalHttp =
+      (protocol === 'http:' || protocol === 'https:') &&
+      (hostname === '127.0.0.1' || hostname === 'localhost');
+    if (isLocalHttp) return origin;
+  }
+  return 'http://127.0.0.1:7878';
+}
+
+const BASE = resolveBase();
 
 export class ApiError extends Error {
   readonly code: string;
@@ -236,7 +256,7 @@ export const api = {
   checklist: (projectId: string): Promise<{ items: ChecklistItem[]; ready: boolean; missing: string[] }> =>
     request(`/v1/projects/${projectId}/checklist`),
 
-  publish: (projectId: string): Promise<{ file: string; bytes: number; entries: string[] }> =>
+  publish: (projectId: string): Promise<{ file: string; bytes: number; entries: string[]; absolutePath?: string }> =>
     request(`/v1/projects/${projectId}/publish`, { method: 'POST' }),
 
   onboardingStatus: (): Promise<{
@@ -278,7 +298,7 @@ export const api = {
 
   generate: (
     projectId: string,
-    kind: 'topic-card' | 'research-notes' | 'publish-pack',
+    kind: 'topic-card' | 'research-notes' | 'script' | 'shot-list' | 'publish-pack' | 'review-report',
     context: string,
   ): Promise<{ artifact: Artifact; payload: unknown }> =>
     request(`/v1/projects/${projectId}/generate`, {
@@ -286,3 +306,209 @@ export const api = {
       body: JSON.stringify({ kind, context }),
     }),
 };
+
+export type Automation = {
+  id: string;
+  projectId: string;
+  name: string;
+  kind: 'topic-card' | 'research-notes' | 'publish-pack';
+  prompt: string;
+  intervalMinutes: number;
+  enabled: boolean;
+  lastRunAt: string | null;
+  nextRunAt: string | null;
+  createdAt: string;
+  recentRuns: AutomationRun[];
+};
+
+export type AutomationRun = {
+  id: string;
+  automationId: string;
+  status: 'running' | 'succeeded' | 'failed';
+  artifactId: string | null;
+  error: string | null;
+  startedAt: string;
+  endedAt: string | null;
+};
+
+export type ProjectMetrics = {
+  id: string;
+  projectId: string;
+  recordedAt: string;
+  views: number;
+  likes: number;
+  comments: number;
+  shares: number;
+  retentionPercent: number;
+  revenueCny: number;
+  note: string;
+};
+
+export type LibraryItem = {
+  id: string;
+  projectId: string;
+  projectTitle: string;
+  kind: string;
+  path: string;
+  size: number;
+  createdAt: string;
+};
+
+export type Dashboard = {
+  counts: { total: number; active: number; deleted: number };
+  artifactsByKind: Array<{ kind: string; count: number }>;
+  runsByStatus: Array<{ status: string; count: number }>;
+  spend: { costCny: number; tokens: number };
+  projects: Array<{
+    id: string;
+    title: string;
+    stage: string;
+    platform: string;
+    artifacts: number;
+    views: number;
+    updatedAt: string;
+  }>;
+  metricsSummary: Array<{
+    projectId: string;
+    samples: number;
+    views: number;
+    likes: number;
+    comments: number;
+    shares: number;
+  }>;
+};
+
+export const apiExtra = {
+  usage: async (): Promise<Usage> => {
+    try {
+      return await request('/v1/usage');
+    } catch {
+      return {
+        totals: { runs: 0, tokens: 0, cost: 0 },
+        budget: { monthlyCostCny: 0, perProjectCostCny: 0, warnAtPercent: 80 },
+        byAgent: [],
+      };
+    }
+  },
+
+  updateProject: (
+    id: string,
+    input: { title?: string; platform?: Platform; description?: string; tags?: string[] },
+  ): Promise<{ project: Project }> =>
+    request(`/v1/projects/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
+
+  deleteProject: (id: string): Promise<{ deleted: string; recoverable: boolean }> =>
+    request(`/v1/projects/${id}`, { method: 'DELETE' }),
+
+  projectDetail: (id: string): Promise<{
+    project: Project;
+    stats: { artifacts: number; runs: number; tokens: number; costCny: number };
+    checklist: ChecklistItem[];
+  }> => request(`/v1/projects/${id}`),
+
+  library: (params: { kind?: string; q?: string } = {}): Promise<{
+    items: LibraryItem[];
+    projects: Array<{ id: string; title: string }>;
+  }> => {
+    const search = new URLSearchParams();
+    if (params.kind !== undefined && params.kind !== '') search.set('kind', params.kind);
+    if (params.q !== undefined && params.q !== '') search.set('q', params.q);
+    const suffix = search.toString() === '' ? '' : `?${search.toString()}`;
+    return request(`/v1/library${suffix}`);
+  },
+
+  dashboard: (): Promise<Dashboard> => request('/v1/dashboard'),
+
+  automations: (projectId?: string): Promise<{ automations: Automation[] }> =>
+    request(`/v1/automations${projectId === undefined ? '' : `?projectId=${projectId}`}`),
+
+  createAutomation: (input: {
+    projectId: string;
+    name: string;
+    kind: 'topic-card' | 'research-notes' | 'publish-pack';
+    prompt: string;
+    intervalMinutes: number;
+    enabled?: boolean;
+  }): Promise<{ automation: Automation }> =>
+    request('/v1/automations', { method: 'POST', body: JSON.stringify(input) }),
+
+  toggleAutomation: (id: string, enabled: boolean): Promise<{ automation: Automation }> =>
+    request(`/v1/automations/${id}`, { method: 'PATCH', body: JSON.stringify({ enabled }) }),
+
+  deleteAutomation: (id: string): Promise<null> => request(`/v1/automations/${id}`, { method: 'DELETE' }),
+
+  runAutomation: (id: string): Promise<{ status: string; artifactId?: string; error?: string }> =>
+    request(`/v1/automations/${id}/run`, { method: 'POST' }),
+
+  metrics: (projectId: string): Promise<{ metrics: ProjectMetrics[] }> =>
+    request(`/v1/projects/${projectId}/metrics`),
+
+  addMetrics: (
+    projectId: string,
+    input: {
+      views: number;
+      likes: number;
+      comments: number;
+      shares?: number;
+      retentionPercent?: number;
+      revenueCny?: number;
+      note?: string;
+    },
+  ): Promise<{ metrics: ProjectMetrics }> =>
+    request(`/v1/projects/${projectId}/metrics`, { method: 'POST', body: JSON.stringify(input) }),
+
+  deleteMetrics: (id: string): Promise<null> => request(`/v1/metrics/${id}`, { method: 'DELETE' }),
+
+  cancelRun: (runId: string): Promise<{ run: Run }> =>
+    request(`/v1/runs/${runId}/cancel`, { method: 'POST' }),
+
+  resumeRun: (
+    runId: string,
+    approvalId?: string,
+  ): Promise<{ outcome: { status: string; text?: string; code?: string }; run: Run }> =>
+    request(`/v1/runs/${runId}/resume`, {
+      method: 'POST',
+      body: JSON.stringify(approvalId === undefined ? {} : { approvalId }),
+    }),
+
+  setModelKey: (id: string, apiKey: string): Promise<{ id: string; keyConfigured: boolean }> =>
+    request(`/v1/settings/models/${id}/key`, { method: 'POST', body: JSON.stringify({ apiKey }) }),
+
+  testModel: (id: string): Promise<{ ok: boolean; latencyMs: number; sample?: string; code?: string; message?: string }> =>
+    request(`/v1/settings/models/${id}/test`, { method: 'POST' }),
+
+  saveModelFull: (input: {
+    id?: string;
+    name: string;
+    baseUrl: string;
+    model: string;
+    provider?: string;
+    apiKey?: string;
+    contextWindow?: number;
+    priceInPerM?: number;
+    priceOutPerM?: number;
+    isLocal?: boolean;
+  }): Promise<{ model: ModelInfo }> =>
+    request('/v1/settings/models', { method: 'POST', body: JSON.stringify(input) }),
+
+  listModelsFull: (): Promise<{
+    models: Array<ModelInfo & { apiKeyRef: string; keyConfigured: boolean; source: string }>;
+    activeModelId: string | null;
+    source: string;
+  }> => request('/v1/settings/models'),
+};
+
+export type Usage = {
+  totals: { runs: number; tokens: number; cost: number };
+  budget: BudgetSettings;
+  byAgent: Array<{
+    agentId: string;
+    status: string;
+    runs: number;
+    tokens: number;
+    costCny: number;
+    avgSeconds: number | null;
+  }>;
+};
+
+export type SettingsTab = 'models' | 'grants' | 'budget' | 'appearance';

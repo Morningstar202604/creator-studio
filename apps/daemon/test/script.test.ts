@@ -78,7 +78,7 @@ describe('artifact routes', () => {
     const body = (await response.json()) as { artifact: { sha256: string }; content: string };
     expect(body.content).toBe('第一版正文');
     expect(body.artifact.sha256).toBe(saved.sha256);
-    expect(readFileSync(join(workspace, 'project', 'script', 'script.v1.md'), 'utf8')).toBe('第一版正文');
+    expect(readFileSync(join(workspace, 'project', 'projects', saved.projectId, 'script', 'script.v1.md'), 'utf8')).toBe('第一版正文');
   });
 
   it('keeps both versions in the project listing', async () => {

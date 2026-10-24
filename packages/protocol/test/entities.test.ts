@@ -22,6 +22,8 @@ describe('ProjectSchema', () => {
       stage: 'script',
       workspacePath: 'C:/Users/x/CreatorStudio/proj-1',
       styleProfileId: null,
+      description: '讲清楚 AI 对初级岗位的结构性影响',
+      tags: ['AI', '就业'],
       createdAt: iso,
       updatedAt: iso,
       deletedAt: null,
@@ -173,6 +175,7 @@ describe('ApprovalSchema', () => {
       requestedAt: iso,
       decidedAt: null,
       decidedBy: null,
+      consumedAt: null,
     };
     expect(ApprovalSchema.parse(value)).toEqual(value);
   });

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "CreatorStudio",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "app.creatorstudio.desktop",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -44,7 +44,7 @@
         ]
       }
     },
-    "shortDescription": "稿台 · 创作者的 AI 制片台",
-    "longDescription": "本地优先的创作者 AI 工作台：选题、资料、脚本、包装、发布包一站式完成，素材不出本机。"
+    "shortDescription": "稿台 · 本地优先的创作者 AI 制片台",
+    "longDescription": "本地优先的创作者 AI 工作台：选题、资料、脚本、分镜、包装、发布包一站式完成，带审批、预算与审计，素材不出本机。"
   }
 }

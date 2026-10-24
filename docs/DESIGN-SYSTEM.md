@@ -1,7 +1,7 @@
 # 视觉基调、品牌与设计系统
 
 > 配套 `UI-SPEC.md`（结构与交互）与 `../ARCHITECTURE.md`（技术约束）。本文定义「长什么样、为什么这样、如何落地成 token」。
-> 状态：设计稿 v0.1。色值已用 WCAG 公式核算对比度，结果见 §3.2；未做真实屏幕与色觉模拟验证。
+> 状态：v0.2 已实施。色值已用 WCAG 公式核算对比度（`python scripts/check-contrast.py`），并已在真机深浅主题下截图（`docs/screenshots/`）；未做色觉模拟验证。
 
 ## 1. 品牌定位
 
@@ -113,7 +113,9 @@
 | `--info` | `#8AB4E0` | 提示、引用 | 8.50 / 7.87 |
 | `--focus` | `#6FB3AC` | 焦点环 | 7.65 / 7.09 |
 
-核算方法：WCAG 2.1 相对亮度公式，正文阈值 4.5:1，非文本 UI 边界 3:1。数值由 `scripts/check-contrast.py` 计算，可直接复算：`python scripts/check-contrast.py`（当前全部通过：8 个语义色 × 7 种底面共 112 项，加 6 项按钮配色与 4 项非文本边界）。
+核算方法：WCAG 2.1 相对亮度公式，正文阈值 4.5:1，非文本 UI 边界 3:1。数值由 `scripts/check-contrast.py` 计算，可直接复算：`python scripts/check-contrast.py`（当前全部通过，含语义色 × 底面矩阵、按钮配色与非文本边界）。
+
+v0.2 补充 token：`--accent-soft`（选中/标签浅底）、`--shadow-3`（浮层）、`--r-sm/--r-xl`。主题切换由 `useTheme()` 写入 `<html data-theme>`，并在 `main.tsx` 首帧前调用 `bootTheme()` 避免闪烁。
 
 ### 3.3 状态浅底
 

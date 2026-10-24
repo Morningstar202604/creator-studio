@@ -6,6 +6,7 @@ import {
   type RunEvent,
   type RunStore,
   type Step,
+  type StoredMessage,
 } from '@creator-studio/protocol';
 import {
   ModelError,
@@ -48,23 +49,32 @@ export type RunInput = {
   runId: string;
   agentId: AgentId;
   messages: ChatMessage[];
+  signal?: AbortSignal | undefined;
+};
+
+export type ResumeInput = {
+  runId: string;
+  agentId: AgentId;
+  /** Approval the user just granted; consumed before the pending tool runs. */
+  approval?: Approval | undefined;
+  signal?: AbortSignal | undefined;
 };
 
 export type RunOutcome =
   | { status: 'succeeded'; text: string; steps: number }
   | { status: 'waiting_approval'; approvalId: string; text: string; steps: number }
   | { status: 'failed'; code: string; message: string; steps: number }
+  | { status: 'cancelled'; text: string; steps: number }
   | { status: 'paused'; reason: 'BUDGET_EXCEEDED' | 'MAX_STEPS'; text: string; steps: number };
 
-const DEFAULT_MAX_STEPS = 12;
+const DEFAULT_MAX_STEPS = 16;
 
 export class AgentRunner {
   constructor(private readonly ctx: RunContext) {}
 
   async run(input: RunInput): Promise<RunOutcome> {
-    const { store, gateway, toolHost } = this.ctx;
+    const { store } = this.ctx;
     const clock = this.ctx.now ?? (() => new Date());
-    const maxSteps = this.ctx.maxStepsPerRun ?? DEFAULT_MAX_STEPS;
 
     const agent = this.ctx.agents.find((candidate) => candidate.id === input.agentId);
     if (agent === undefined) {
@@ -75,19 +85,102 @@ export class AgentRunner {
     if (run === null) {
       return { status: 'failed', code: 'RUN_NOT_FOUND', message: input.runId, steps: 0 };
     }
-
-    if (run.status === 'queued') {
-      store.patchRun(run.id, { status: 'running', startedAt: clock().toISOString() });
+    if (run.status === 'succeeded' || run.status === 'cancelled') {
+      return { status: 'failed', code: 'RUN_TERMINAL', message: `run already ${run.status}`, steps: 0 };
     }
 
-    const toolSchemas: ToolSchema[] = this.schemasFor(agent);
     const transcript: ChatMessage[] = [{ role: 'system', content: agent.systemPrompt }, ...input.messages];
+    this.persistMessages(run.id, transcript, clock, 0);
+    store.patchRun(run.id, { status: 'running', startedAt: run.startedAt ?? clock().toISOString(), endedAt: null });
 
-    let accumulatedText = '';
-    let stepCount = 0;
+    return this.loop(run, agent, transcript, this.nextStepIndex(run.id), '', input.signal, clock);
+  }
+
+  /**
+   * Continues a run that paused for approval (or was interrupted). The stored
+   * transcript is the source of truth: if the last assistant message still has
+   * tool calls without results, those calls run first, then the model resumes.
+   */
+  async resume(input: ResumeInput): Promise<RunOutcome> {
+    const { store } = this.ctx;
+    const clock = this.ctx.now ?? (() => new Date());
+    const agent = this.ctx.agents.find((candidate) => candidate.id === input.agentId);
+    if (agent === undefined) {
+      return { status: 'failed', code: 'UNKNOWN_AGENT', message: `no agent ${input.agentId}`, steps: 0 };
+    }
+    const run = store.getRun(input.runId);
+    if (run === null) {
+      return { status: 'failed', code: 'RUN_NOT_FOUND', message: input.runId, steps: 0 };
+    }
+    if (run.status === 'succeeded' || run.status === 'cancelled') {
+      return { status: 'failed', code: 'RUN_TERMINAL', message: `run already ${run.status}`, steps: 0 };
+    }
+
+    // Keep the stored system row so transcript indexes stay aligned with the
+    // persisted seq numbers; only its text is refreshed to the current prompt.
+    const stored = store.listMessages(run.id);
+    const transcript: ChatMessage[] = stored.map(toChatMessage);
+    if (transcript[0]?.role === 'system') transcript[0] = { role: 'system', content: agent.systemPrompt };
+    if (transcript.length === 0) {
+      return this.run({ runId: run.id, agentId: agent.id, messages: [], ...(input.signal ? { signal: input.signal } : {}) });
+    }
+
+    const grants = this.ctx.grantsFor?.(agent.id) ?? [];
+    let stepCount = this.nextStepIndex(run.id);
+    let accumulatedText = transcript
+      .filter((message) => message.role === 'assistant')
+      .map((message) => message.content)
+      .join('');
+
+    store.patchRun(run.id, { status: 'running', startedAt: run.startedAt ?? clock().toISOString(), endedAt: null });
+
+    const pending = pendingToolCalls(transcript);
+    for (const { call, stepId } of pending) {
+      stepCount += 1;
+      const outcome = await this.executeOne(
+        { ...run, status: 'running' },
+        stepId,
+        stepCount,
+        call,
+        transcript,
+        grants,
+        input.approval ?? null,
+        clock,
+      );
+      if (outcome !== null) {
+        const text = accumulatedText;
+        store.patchRun(run.id, { status: 'waiting_approval' });
+        return { status: 'waiting_approval', approvalId: outcome.approvalId, text, steps: stepCount };
+      }
+    }
+
+    return this.loop(run, agent, transcript, stepCount, accumulatedText, input.signal, clock);
+  }
+
+  private async loop(
+    run: Run,
+    agent: AgentSpec,
+    transcript: ChatMessage[],
+    startSteps: number,
+    startText: string,
+    signal: AbortSignal | undefined,
+    clock: () => Date,
+  ): Promise<RunOutcome> {
+    const { store } = this.ctx;
+    const maxSteps = this.ctx.maxStepsPerRun ?? DEFAULT_MAX_STEPS;
+    const toolSchemas = this.schemasFor(agent);
     const grants = this.ctx.grantsFor?.(agent.id) ?? [];
 
+    let accumulatedText = startText;
+    let stepCount = startSteps;
+
     while (stepCount < maxSteps) {
+      if (isAborted(signal) || store.getRun(run.id)?.status === 'cancelled') {
+        store.patchRun(run.id, { status: 'cancelled', endedAt: clock().toISOString() });
+        this.emit(run.id, 'run.finished', { status: 'cancelled', steps: stepCount });
+        return { status: 'cancelled', text: accumulatedText, steps: stepCount };
+      }
+
       stepCount += 1;
       const stepId = `${run.id}_s${stepCount}`;
       this.createStep(stepId, run.id, stepCount, 'model');
@@ -98,16 +191,23 @@ export class AgentRunner {
       let usage: Usage | null = null;
 
       try {
-        const stream = gateway.chat(
+        const stream = this.ctx.gateway.chat(
           { agentId: agent.id, budget: this.currentBudget(run.id) },
           {
             messages: transcript,
             ...(toolSchemas.length === 0 ? {} : { tools: toolSchemas }),
             ...(agent.maxOutputTokens === undefined ? {} : { maxOutputTokens: agent.maxOutputTokens }),
+            ...(signal === undefined ? {} : { signal }),
           },
         );
 
         for await (const delta of stream) {
+          if (isAborted(signal)) {
+            this.finishStep(stepId, 'skipped');
+            store.patchRun(run.id, { status: 'cancelled', endedAt: clock().toISOString() });
+            this.emit(run.id, 'run.finished', { status: 'cancelled', steps: stepCount });
+            return { status: 'cancelled', text: accumulatedText + textThisStep, steps: stepCount };
+          }
           if (delta.kind === 'text') textThisStep += delta.text;
           else if (delta.kind === 'usage') usage = delta.usage;
           else if (delta.kind === 'tool_call') {
@@ -168,18 +268,23 @@ export class AgentRunner {
       });
 
       if (toolCalls.size === 0) {
+        const assistant: ChatMessage = { role: 'assistant', content: textThisStep };
+        transcript.push(assistant);
+        this.persistMessages(run.id, [assistant], clock, transcript.length - 1);
         store.patchRun(run.id, { status: 'succeeded', endedAt: clock().toISOString() });
         this.emit(run.id, 'run.finished', { status: 'succeeded', steps: stepCount });
         return { status: 'succeeded', text: accumulatedText, steps: stepCount };
       }
 
       const calls = [...toolCalls.values()];
-      transcript.push({ role: 'assistant', content: textThisStep, toolCalls: calls });
+      const assistant: ChatMessage = { role: 'assistant', content: textThisStep, toolCalls: calls };
+      transcript.push(assistant);
+      this.persistMessages(run.id, [assistant], clock, transcript.length - 1);
 
       for (const call of calls) {
-        const paused = await this.executeOne(run, stepId, stepCount, call, transcript, grants, clock);
-        if (paused !== null) {
-          return { ...paused, text: accumulatedText, steps: stepCount };
+        const outcome = await this.executeOne(run, stepId, stepCount, call, transcript, grants, null, clock);
+        if (outcome !== null) {
+          return { status: 'waiting_approval', approvalId: outcome.approvalId, text: accumulatedText, steps: stepCount };
         }
       }
     }
@@ -196,36 +301,54 @@ export class AgentRunner {
     call: ChatToolCall,
     transcript: ChatMessage[],
     grants: import('@creator-studio/protocol').ToolGrant[],
+    provided: Approval | null,
     clock: () => Date,
-  ): Promise<Extract<RunOutcome, { status: 'waiting_approval' }> | null> {
+  ): Promise<{ approvalId: string } | null> {
     const { store, toolHost } = this.ctx;
     const tool = toolHost.list().find((entry) => entry.name === call.name);
     const kind = (tool?.approvalKind ?? null) as ApprovalKind | null;
     const input = safeJson(call.argumentsJson);
 
-    let approval: Approval | null = null;
+    let approval: Approval | null = provided;
     if (kind !== null) {
-      approval = await this.ctx.approvalProvider.request(kind, input, {
-        runId: run.id,
-        stepId,
-        tool: call.name,
-      });
       if (approval === null) {
-        const approvalId = `${stepId}_${call.id}`;
-        store.createApproval({
-          id: approvalId,
+        approval = await this.ctx.approvalProvider.request(kind, input, {
           runId: run.id,
           stepId,
-          kind,
-          payload: input,
-          decision: 'pending',
-          requestedAt: clock().toISOString(),
-          decidedAt: null,
-          decidedBy: null,
+          tool: call.name,
         });
+      }
+      if (approval === null) {
+        const existing = store
+          .listApprovals(run.id)
+          .find((candidate) => candidate.decision === 'pending' && candidate.kind === kind);
+        const approvalId = existing?.id ?? `${stepId}_${call.id}`;
+        if (existing === undefined) {
+          store.createApproval({
+            id: approvalId,
+            runId: run.id,
+            stepId,
+            kind,
+            payload: input,
+            decision: 'pending',
+            requestedAt: clock().toISOString(),
+            decidedAt: null,
+            decidedBy: null,
+            consumedAt: null,
+          });
+          this.emit(run.id, 'approval.requested', { stepId, tool: call.name, approvalId });
+        }
         store.patchRun(run.id, { status: 'waiting_approval' });
-        this.emit(run.id, 'approval.requested', { stepId, tool: call.name });
-        return { status: 'waiting_approval', approvalId, text: '', steps: stepIndex };
+        return { approvalId };
+      }
+      if (!store.consumeApproval(approval.id)) {
+        this.emit(run.id, 'approval.requested', {
+          stepId,
+          tool: call.name,
+          approvalId: approval.id,
+          reason: 'APPROVAL_CONSUMED',
+        });
+        return { approvalId: approval.id };
       }
     }
 
@@ -245,14 +368,44 @@ export class AgentRunner {
 
     this.emit(run.id, 'tool.result', { tool: call.name, ok: result.ok });
 
-    transcript.push({
+    const toolMessage: ChatMessage = {
       role: 'tool',
       content: JSON.stringify(result.ok ? result.output : { error: result.code, message: result.message }),
       toolCallId: call.id,
       name: call.name,
-    });
-
+    };
+    transcript.push(toolMessage);
+    this.persistMessages(run.id, [toolMessage], clock, transcript.length - 1);
     return null;
+  }
+
+  private persistMessages(runId: string, messages: ChatMessage[], clock: () => Date, startSeq = 0): void {
+    const existing = this.ctx.store.listMessages(runId).length;
+    messages.forEach((message, offset) => {
+      const seq = startSeq + offset;
+      if (seq < existing) return;
+      const stored: StoredMessage = {
+        id: `${runId}_m${seq}`,
+        runId,
+        seq,
+        role: message.role,
+        content: message.content,
+        toolCallId: message.toolCallId ?? null,
+        name: message.name ?? null,
+        toolCalls: message.toolCalls ?? null,
+        createdAt: clock().toISOString(),
+      };
+      try {
+        this.ctx.store.appendMessage(stored);
+      } catch {
+        // Resume is best effort: a duplicate seq must not abort the live run.
+      }
+    });
+  }
+
+  private nextStepIndex(runId: string): number {
+    const steps = this.ctx.store.listSteps(runId);
+    return steps.length === 0 ? 0 : Math.max(...steps.map((step) => step.index));
   }
 
   private schemasFor(agent: AgentSpec): ToolSchema[] {
@@ -314,6 +467,36 @@ export class AgentRunner {
       ts: new Date().toISOString(),
     });
   }
+}
+
+function toChatMessage(message: StoredMessage): ChatMessage {
+  return {
+    role: message.role,
+    content: message.content,
+    ...(message.toolCallId === null ? {} : { toolCallId: message.toolCallId }),
+    ...(message.name === null ? {} : { name: message.name }),
+    ...(message.toolCalls === null ? {} : { toolCalls: message.toolCalls }),
+  };
+}
+
+/**
+ * Tool calls in the last assistant message that have no matching tool result yet.
+ * Step ids mirror the suffix the runner writes (`run_step`), so replay is traceable.
+ */
+export function pendingToolCalls(transcript: ChatMessage[]): Array<{ call: ChatToolCall; stepId: string }> {
+  const lastAssistant = [...transcript].reverse().find((message) => message.role === 'assistant');
+  if (lastAssistant?.toolCalls === undefined) return [];
+  const answered = new Set(
+    transcript.filter((message) => message.role === 'tool').map((message) => message.toolCallId),
+  );
+  const index = transcript.lastIndexOf(lastAssistant);
+  return lastAssistant.toolCalls
+    .filter((call) => !answered.has(call.id))
+    .map((call) => ({ call, stepId: `resume_${index}` }));
+}
+
+function isAborted(signal: AbortSignal | undefined): boolean {
+  return signal !== undefined && signal.aborted;
 }
 
 function safeJson(value: string): unknown {

@@ -61,7 +61,7 @@ describe('R1 versions are append-only', () => {
     const readBack = store.read('a1');
     expect(readBack?.content).toBe('第一版');
     expect(store.list(projectId)).toHaveLength(2);
-    expect(readFileSync(join(workspace, 'script/script.v1.md'), 'utf8')).toBe('第一版');
+    expect(readFileSync(join(workspace, 'projects', projectId, 'script/script.v1.md'), 'utf8')).toBe('第一版');
   });
 
   it('computes the next version number from existing paths', () => {
@@ -113,7 +113,7 @@ describe('R2 sha256 matches disk', () => {
       content: '中文内容 with ascii',
       mime: 'text/markdown',
     });
-    const onDisk = readFileSync(join(workspace, artifact.path), 'utf8');
+    const onDisk = readFileSync(join(workspace, 'projects', projectId, artifact.path), 'utf8');
     expect(artifact.sha256).toHaveLength(64);
     expect(artifact.size).toBe(Buffer.byteLength(onDisk, 'utf8'));
     const reread = store.read(artifact.id);
@@ -132,7 +132,7 @@ describe('R2 sha256 matches disk', () => {
       content: 'original',
       mime: 'text/markdown',
     });
-    writeFileSync(join(workspace, artifact.path), 'tampered', 'utf8');
+    writeFileSync(join(workspace, 'projects', projectId, artifact.path), 'tampered', 'utf8');
     expect(() => store.read(artifact.id)).toThrowError(ArtifactCorruptError);
   });
 });

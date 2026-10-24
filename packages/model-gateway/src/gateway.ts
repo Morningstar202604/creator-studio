@@ -83,6 +83,14 @@ export class ModelGateway {
     return [...this.options.profiles];
   }
 
+  /**
+   * Swaps the profile list at runtime (settings UI). The resolver stays the same,
+   * so a newly added profile becomes usable without restarting the daemon.
+   */
+  replaceProfiles(profiles: ModelProfile[]): void {
+    this.options.profiles = profiles;
+  }
+
   resolveProfile(agentId: string | undefined, profileId: string | undefined): ModelProfile {
     const byRouting = agentId !== undefined ? this.options.routing?.[agentId as never] : undefined;
     const targetId = profileId ?? byRouting;

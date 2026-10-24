@@ -1,47 +1,62 @@
-# 项目结项报告
+# 项目结项报告（v0.2）
 
-日期：2026-10-23
+日期：2026-10-24
+
+## 本轮定位
+
+v0.1 已经跑通「一条链路的骨架」。v0.2 把它做成**可交付、可展示、可运营**的开源项目：
+补掉全部占位页、补上审批续跑与取消、把密钥和花费管起来、提供 Web 与 CLI 两种入口，
+并用真实模型跑通端到端，产出完整展示物料。
 
 ## 交付范围
 
-按 `ARCHITECTURE.md` §9 的 21 项任务（含 T10b）全部完成。
+| 维度 | 内容 |
+|---|---|
+| 流水线 | 选题 / 资料 / 脚本 / 分镜 / 包装 / 发布 / 复盘，7 个阶段全部有真实页面与产物 |
+| 运行时 | 审批暂停与恢复、转录落盘、取消、崩溃标记、预算记账、审计 |
+| 界面 | 卡片/列表双视图、搜索筛选、命令面板、深浅主题、响应式 1100/900、Markdown 渲染 |
+| 数据 | 6 个迁移 11 张表；项目软删恢复；自动化与复盘指标 |
+| 入口 | Tauri 桌面安装包 / 浏览器直连 daemon / CLI 14 条命令 / HTTP API 51 条路由 |
+| 物料 | 29 张真机截图、24 秒 MP4 与 GIF、中英 README、对标报告、API/CLI 文档 |
 
-| 阶段 | 任务 | 状态 |
-|---|---|---|
-| 地基 | T1 protocol / T2 store-sqlite / T3 model-gateway / T4 tools / T5 agent-core | 完成 |
-| 本地可用 | T6 Tauri 壳 / T7 AppShell+路由 / T8 SSE+任务页 / T9 脚本站 / T10 三阶段页 / T10b 引导+设置 / T11 端到端+发布包 | 完成 |
-| 云端 | T12 API+配对 / T13 隧道 / T14 worker+配额 / T15 同步边界 / T16 计费 | 完成（内存实现，见边界） |
-| 加固 | T17 注入防护 / T18 崩溃恢复 / T19 可观测 / T20 安装包 / T21 安全审计 | 完成 |
-
-## 验证证据
+## 验证证据（本机实测）
 
 ```
-pnpm -r test            360 passed / 8 packages
+pnpm -r test            9 packages, 386 passed
 pnpm -r build           all Done
 pnpm -r typecheck       all Done
-security-audit.mjs      117 files, 5 checks PASS
-check-contrast.py       122 checks PASS
-tauri build             CreatorStudio_0.1.0_x64-setup.exe (11.12 MiB)
+security-audit.mjs      138 files, 5 checks PASS
+check-contrast.py       all passed
+tauri build             CreatorStudio_0.2.0_x64-setup.exe (11.93 MiB)
+shoot.py                29 screenshots, 0 console errors, 0 overflow
 ```
 
-真机验证（WebView2 + CDP）：安装版启动 → 自动拉起 daemon → 建项目 → 选题生成 3 卡 → SSE 事件按序 → 发布包导出 zip → `Expand-Archive` 解出 4 文件。
+真实模型（非 mock）：
 
-2026-10-23 补验（本机，无签名环境）：隧道鉴权 6 例（缺参/错 token/跨设备 token/吊销/合法/吊销即断）、脚本页带入 3 例、发布页轮询 1 例均过；`/v1/tunnel` 升级握手令牌校验生效。
+- 本机自定义 OpenAI 兼容网关，模型 `glm-5.3-flash` / `deepseek-v4.1-flash`
+- 6 个阶段全部生成并过 schema：topic-card / research-notes / script / shot-list / publish-pack（+ review 页面数据回填）
+- 发布包 `publish-2026-10-24T02-12-19-058Z.zip`，14,621 B，6 个文件，`manifest.json` 逐文件 sha256
+- `Apply-Archive`/Python zipfile 均验证可读
 
-## 明确未完成 / 未验证
+## 本轮修掉的真实缺陷
 
-1. **真实模型未接入**。所有生成与改写只对本地 fake upstream 验证，未用任何供应商密钥跑过。`scripts/smoke-model.mjs` 可在有 key 的机器上补测。
-2. **云端是单机内存实现**。未接 Postgres/Redis，重启丢状态。`/v1/tunnel` 已补设备令牌校验（缺参 4001 / 无效 4003）并支持吊销即断开（4002）；`/v1/tool` 已补属主校验（跨用户/不存在设备统一 404）；设备令牌已支持手动轮换（`POST /v1/devices/:id/rotate`，旧令牌立即失效）。剩余：90 天定时轮换与离线队列重放需调度器，随 Postgres 时代落地；令牌经查询参数传递，升级 hello 帧握手后再暴露公网。
-3. **自动更新未实现**。无代码签名证书，NSIS 包只能手动升级。
-4. **MVP 效率目标未测**。「8 小时降到 2 小时」「初稿接受率 ≥60%」「事实核查 ≥80%」都是产品假设，需要真人实测。
+1. 模型把 `risks` 输出成字符串 → schema 失败。加 `coerceByKind` 容错矫正（数字字符串、标量转数组、嵌套解包）。
+2. 模型无视「只输出 JSON」返回散文 → 加输出契约并在首次失败后带字面示例重试一次。
+3. v0.1 产物路径跨项目冲突 → 改为 `projects/<projectId>/…`。
+4. 恢复时转录索引错位 → 保留 system 行占位，按 seq 对齐。
+5. Web 形态下前端硬编码 7878 → 改为同源识别，任意端口可用。
 
-已于 2026-10-23 闭环的原缺口：
+## 明确未完成（诚实清单）
 
-- ~~页面间联动仍是手动的~~ → 脚本页在编辑器为空且存在选题/资料产物时提供「带入选题与资料」一键带入；资料/包装生成的提示词此前已自动携带上游产物。
-- ~~发布页数据不会自动刷新~~ → 在手动按钮与 window focus 重载之外增加 30s 轮询。
+1. **云端仍是内存实现**：未接 Postgres/Redis，重启丢云端状态；多租户隔离靠 404 遮蔽而非数据库约束。
+2. **自动更新未实现**：无代码签名证书，NSIS 只能手动升级。
+3. **语义检索/向量记忆未实现**：跨阶段上下文靠上游产物拼接，长稿会截断到 8000 字。
+4. **真人效率与质量指标未测**：「8 小时→2 小时」「初稿接受率 ≥60%」仍是假设。
+5. **跨平台未实测**：只在 Windows 11 构建与运行；CI 工作流已写好但未在本机验证 GitHub Actions 实际跑通。
 
-## 建议的下一步
+## 下一步（按优先级）
 
-1. 用真实 API key 跑 `scripts/smoke-model.mjs`，再做一次完整 15 分钟视频的真人计时。
-2. 把 `apps/cloud/src/store.ts` 的 `MemoryStore` 换成 Postgres 实现（接口不变）；届时同步落地 hello 帧握手、90 天定时轮换与离线队列重放。
-3. 自动更新需代码签名证书后接 Tauri updater。
+1. 用 `Store` 接口换 Postgres 实现，云端补 hello 帧握手、90 天轮换、离线队列。
+2. 引入 SQLite FTS5 + embedding 增量索引，替代「上游全文拼接」。
+3. 接 Tauri updater（需签名证书）。
+4. 找 3–5 位目标创作者做 3 期陪跑，量真实耗时与接受率。

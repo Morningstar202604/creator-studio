@@ -2,7 +2,7 @@
 
 > 本文档是本项目的唯一真理源（Single Source of Truth）。
 > 任何影响架构、接口、数据模型、依赖或目录结构的代码变更，都必须同步更新本文档。
-> 最后更新：2026-10-21 ｜ 文档版本：v0.1（设计稿，未实施）
+> 最后更新：2026-10-24 ｜ 文档版本：v0.2（已实施，含真实模型端到端验证）
 
 ## 1. 概述与目标
 
@@ -605,6 +605,18 @@ type LinkFrame =
 - [x] T15 同步服务（visibility 过滤）— 验证：本地 `visibility='local'` 的产物从不经过云端 API，云端只存运行元数据，无产物内容通道（INV-10 由数据路径保证）
 - [x] T16 计费与配额 — 验证：free/creator/pro 三档，超配额返回 402 `PLAN_LIMIT`，`/v1/usage` 按用户聚合运行数与费用
 
+### 阶段 4：可运营（v0.2，2026-10-24）
+
+- [x] T22 审批续跑与转录落盘 — 迁移 004/006，`AgentRunner.resume()`，审批一次性消费 — 验证：`apps/daemon/test/features.test.ts` R3（批准后续跑删文件、未批准 409）
+- [x] T23 运行取消与项目生命周期 — `/cancel`、`PATCH/DELETE/restore`、关键词搜索 — 验证：R1/R4 共 6 例
+- [x] T24 六类产物契约 — script / shot-list / review-report 加入 schema、提示词、渲染、上游映射 — 验证：R2 四例含 fail-closed
+- [x] T25 复盘与资料库 — metrics 表 + `/v1/dashboard` + `/v1/library` — 验证：R6 三例
+- [x] T26 自动化调度 — automations 表 + 30s 调度器 + 立即运行 — 验证：R5 两例
+- [x] T27 模型密钥库与即时生效 — `SecretVault` + `replaceProfiles()` + 连通性测试 — 验证：R7 两例 + 设置页真机
+- [x] T28 Web 形态 — daemon 托管前端 + 同源识别 — 验证：`http://127.0.0.1:7911/` 返回 200，29 张截图由真浏览器产出
+- [x] T29 CLI — `apps/cli` 14 条命令 — 验证：5 例客户端契约测试 + 对活 daemon 跑 health/projects/checklist/artifacts/usage
+- [x] T30 真实模型端到端 — 本机自定义网关跑通 6 阶段并导出发布包 — 验证：6 个产物落盘、zip 14.6 KB / 6 文件 / manifest 可复核
+
 ### 阶段 3：加固（第 10–12 周）
 
 - [x] T17 提示注入防护与 untrusted 围栏 — 验证：`fenceUntrusted` 中和闭合标签、10 条注入模式扫描、上游产物入 prompt 前加围栏（60 测试）
@@ -627,10 +639,61 @@ T1 → T2 → T4 → T5 → T10 → T11 → T12 → T13 → T14。
 | 长上下文成本 | 中 | 分层摘要 + 检索式记忆 + 预算封顶 |
 | 提示注入 | 高 | untrusted 围栏 + 工具权限 + 破坏性操作审批 |
 
+## 9.1 v0.2 增量（2026-10-24）
+
+v0.1 的 T1–T21 覆盖了「一条链路的骨架」。v0.2 补齐的是**可运营**：审批后能续跑、花费可归因、
+占位页全部落地、界面可日常使用、以及一个不依赖浏览器的脚本化入口。全部为增量，未推翻既有契约。
+
+### 9.1.1 新增数据
+
+| 迁移 | 内容 | 用途 |
+|---|---|---|
+| `004_run_messages.sql` | `runs.input_message`、`run_messages(run_id, seq, role, content, tool_call_id, name, tool_calls)` | 转录落盘，审批/中断后按最后一条 assistant 的未完成工具调用续跑 |
+| `005_library_automations.sql` | `projects.description/tags`、`automations`、`automation_runs`、`project_metrics` | 项目元信息、定时生成、复盘数据回填 |
+| `006_run_resume.sql` | `approvals.consumed_at` | 审批一次性消费，禁止同一批准复用 |
+
+### 9.1.2 新增/变更接口
+
+见 `docs/API.md` 全量清单。要点：
+
+- 审批 → 续跑：`POST /v1/runs/:id/resume`，`ApprovalProvider` 只在 `executeOne` 缺省时请求；恢复时以持久化转录为准。
+- 取消：`POST /v1/runs/:id/cancel`，同时把 pending 审批置 `expired`。
+- 项目：`PATCH/DELETE /v1/projects/:id`、`POST /restore`、`GET /v1/projects?q=`、`GET /v1/projects/:id`（含 stats + checklist）。
+- 生成：`kind` 扩到 6 类；每次生成建 Run 记账（`runId` 随 201 返回）；`pipeline.ts` 抽出复用。
+- 设置：`POST /v1/settings/models/:id/key`、`POST /test`；`ModelGateway.replaceProfiles()` 让设置即时生效。
+- 自动化：`/v1/automations` CRUD + `/run`，daemon 内置 30s 调度。
+- 复盘：`/v1/projects/:id/metrics` 与 `/v1/dashboard`。
+- 静态托管：`@fastify/static` + SPA fallback，浏览器可直接用 daemon 端口访问界面。
+
+### 9.1.3 前端结构变化
+
+- `AppShell` 增加：预算 chip、模型 chip（缺密钥时告警）、待办计数、主题切换、命令面板（Ctrl/Cmd+K）。
+- 新增页面：`LibraryPage`、`AutomationsPage`、`ReviewPage`（ECharts 懒加载 1.1 MB chunk）；`StagePage` 增加分镜。
+- 主题：`tokens.css` 双主题 + `prefers-reduced-motion`；`bootTheme()` 在首帧前应用。
+- Markdown：`marked` + `DOMPurify`（模型输出按不可信输入处理）。
+
+### 9.1.4 产物路径变更（破坏性，但仅影响本地文件布局）
+
+产物从 `workspace/<relative>` 改为 `workspace/projects/<projectId>/<relative>`。原因：v0.1 两个项目写
+`script/script.v1.md` 会互相覆盖。DB 里的 `path` 仍是项目内相对路径，`ArtifactStore` 负责拼接项目前缀。
+
+### 9.1.5 生成健壮性（真实模型踩出来的）
+
+1. **容错矫正**（`coerceByKind`）：数字字符串转数字、`risks: "a；b"` 转数组、`{cards:[{cards:[…]}]}` 解包。
+   只修已知形状，其余仍 fail-closed。
+2. **输出契约 + 一次纠正重试**：`jsonInstruction()` 追加字段级要求；首次 schema 失败时把字面示例塞回对话再请求一次（温度降到 0.2）。
+3. **生成记账**：生成也走 Run 行，`/v1/usage` 能反映真实 token 与费用。
+
+### 9.1.6 验证基线
+
+9 个包 386 测试；`security-audit` 138 文件 5 类 PASS；对比度全过；Tauri 安装包 11.93 MiB；
+真实模型（本机 OpenAI 兼容网关，glm-5.3-flash / deepseek-v4.1-flash）6 阶段全通。
+
 ## 10. 变更日志
 
 | 日期 | 变更摘要 | 影响的章节 | 关联任务/ADR | 验证方式 |
 |---|---|---|---|---|
+| 2026-10-24 | v0.2：审批续跑、取消、项目生命周期、分镜/复盘/资料库/自动化四页落地、密钥库、Web 形态、CLI、深色主题与命令面板、生成记账与容错矫正、项目级产物路径 | §6、§7、§9.1 | T22–T30 | `pnpm -r test` 386 passed（9 包）/ typecheck / build / security-audit 138 files PASS / contrast PASS / tauri 11.93 MiB / 真实模型 6 阶段端到端 / 29 张截图 0 console error |
 | 2026-10-23 | 云端安全收口：`/v1/tool` 增加属主校验（跨用户/不存在设备统一 404 遮蔽）；新增 `POST /v1/devices/:id/rotate` 手动令牌轮换（旧令牌立即失效，已吊销 409） | §7.5、§7.3 | T12/T16 加固 | `pnpm -r test` 360 passed（cloud 24）/ typecheck / build / security-audit 117 files PASS / AQG 检查 PASSED |
 | 2026-10-23 | CLOSEOUT 收尾：`/v1/tunnel` 升级握手校验设备令牌（4001/4003）+ 吊销即断开（4002）；脚本页空编辑器一键带入选题/资料产物；发布页 30s 轮询刷新；tools symlink 测试守卫修复并补 realpath 逃逸单测 | §7.3、CLOSEOUT | T13 加固 | `pnpm -r test` 354 passed（cloud 18、desktop 70、tools 61）/ typecheck / build / security-audit 117 files PASS / AQG 检查 PASSED |
 | 2026-10-21 | 初始架构建立 | 全部 | ADR-001~008 | 文档评审 |

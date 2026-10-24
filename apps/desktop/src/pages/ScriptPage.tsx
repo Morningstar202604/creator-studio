@@ -16,13 +16,12 @@ export function ScriptPage(): React.ReactElement {
   const [pending, setPending] = useState<{ before: string; after: string } | null>(null);
   const [selection, setSelection] = useState('');
   const [range, setRange] = useState<{ start: number; end: number }>({ start: 0, end: 0 });
+  const [instruction, setInstruction] = useState('更口语、更短');
+  const [generating, setGenerating] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const [projectResult, artifactResult] = await Promise.all([
-        api.getProject(id),
-        api.listArtifacts(id),
-      ]);
+      const [projectResult, artifactResult] = await Promise.all([api.getProject(id), api.listArtifacts(id)]);
       setProject(projectResult.project);
       setArtifacts(artifactResult.artifacts);
       const latest = artifactResult.artifacts.find((artifact) => artifact.kind === 'script');
@@ -60,19 +59,37 @@ export function ScriptPage(): React.ReactElement {
     }
   };
 
+  const generateDraft = async (): Promise<void> => {
+    if (text.trim() !== '') return;
+    setGenerating(true);
+    setError(null);
+    try {
+      const topic = artifacts.find((artifact) => artifact.kind === 'topic-card');
+      const research = artifacts.find((artifact) => artifact.kind === 'research-notes');
+      const source = topic ?? research;
+      if (source === undefined) return;
+      const detail = await api.getArtifact(source.id);
+      const result = await api.generate(project?.id ?? id, 'script', detail.content.slice(0, 1200));
+      const created = await api.getArtifact(result.artifact.id);
+      setText(created.content);
+      setSavedText('');
+      await load();
+    } catch (cause) {
+      setError(cause instanceof ApiError || cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setGenerating(false);
+    }
+  };
+
   const rewrite = async (): Promise<void> => {
     if (selection.trim() === '') return;
     setBusy(true);
     try {
-      const result = await api.rewrite(selection, '更口语、更短');
+      const result = await api.rewrite(selection, instruction);
       const before = text;
-      // Replace exactly at the selection offsets: String.replace would hit the first
-      // matching occurrence anywhere in the document instead of the selected one.
-      const after =
-        before.slice(0, range.start) + result.rewritten + before.slice(range.end);
+      const after = before.slice(0, range.start) + result.rewritten + before.slice(range.end);
       setPending({ before, after });
     } catch (cause) {
-      // R4: the editor content must survive a failed rewrite.
       setError(cause instanceof ApiError || cause instanceof Error ? cause.message : String(cause));
     } finally {
       setBusy(false);
@@ -92,22 +109,14 @@ export function ScriptPage(): React.ReactElement {
     setPending(null);
   };
 
-  const diff = useMemo(
-    () => (pending === null ? null : diffLines(pending.before, pending.after)),
-    [pending],
-  );
+  const diff = useMemo(() => (pending === null ? null : diffLines(pending.before, pending.after)), [pending]);
 
   const dirty = text !== savedText;
 
-  // listArtifacts is newest-first, so the first hit per kind is the latest version.
   const latestUpstream = useMemo(() => {
     const topic = artifacts.find((artifact) => artifact.kind === 'topic-card');
     const research = artifacts.find((artifact) => artifact.kind === 'research-notes');
-    return {
-      topic,
-      research,
-      exists: topic !== undefined || research !== undefined,
-    };
+    return { topic, research, exists: topic !== undefined || research !== undefined };
   }, [artifacts]);
 
   const importUpstream = async (): Promise<void> => {
@@ -128,7 +137,6 @@ export function ScriptPage(): React.ReactElement {
         return;
       }
       setText(sections.join('\n\n'));
-      // savedText stays empty so the imported scaffold is dirty until saved as a version.
       setSavedText('');
     } catch (cause) {
       setError(cause instanceof ApiError || cause instanceof Error ? cause.message : String(cause));
@@ -136,6 +144,10 @@ export function ScriptPage(): React.ReactElement {
       setBusy(false);
     }
   };
+
+  const versions = artifacts.filter((artifact) => artifact.kind === 'script');
+  const words = text.replace(/\s+/g, '').length;
+  const minutes = Math.max(1, Math.round(words / 260));
 
   return (
     <AppShell
@@ -151,7 +163,7 @@ export function ScriptPage(): React.ReactElement {
         <div>
           <h1 className="page-title">脚本</h1>
           <div className="page-sub">
-            {project === null ? '加载中…' : `${artifacts.filter((a) => a.kind === 'script').length} 个版本`}
+            {project === null ? '加载中…' : `${versions.length} 个版本 · ${words} 字 · 约 ${minutes} 分钟口播`}
             {dirty && <span className="dirty"> · 未保存</span>}
           </div>
         </div>
@@ -159,6 +171,11 @@ export function ScriptPage(): React.ReactElement {
         {text === '' && latestUpstream.exists && (
           <button className="btn" disabled={busy} onClick={() => void importUpstream()}>
             {busy ? '带入中…' : '带入选题与资料'}
+          </button>
+        )}
+        {text === '' && latestUpstream.exists && (
+          <button className="btn primary" disabled={generating} onClick={() => void generateDraft()}>
+            {generating ? '生成中…' : '让 Agent 出初稿'}
           </button>
         )}
         <button className="btn" disabled={busy || !dirty} onClick={() => void save()}>
@@ -172,7 +189,7 @@ export function ScriptPage(): React.ReactElement {
         <section className="panel script-editor">
           <div className="panel-head">
             <span className="panel-title">正文</span>
-            <span className="hint">{text.length} 字</span>
+            <span className="hint">{words} 字</span>
           </div>
           <textarea
             className="input script-textarea"
@@ -187,11 +204,23 @@ export function ScriptPage(): React.ReactElement {
               setRange({ start, end });
             }}
           />
-          <div className="row">
+          <div className="row wrap">
+            <select
+              className="input select"
+              style={{ width: 'auto' }}
+              value={instruction}
+              onChange={(event) => setInstruction(event.target.value)}
+              aria-label="改写要求"
+            >
+              <option value="更口语、更短">更口语、更短</option>
+              <option value="加一个具体例子">加一个具体例子</option>
+              <option value="更严谨，补上数据口径">更严谨，补数据口径</option>
+              <option value="改成开场钩子">改成开场钩子</option>
+            </select>
             <button className="btn primary" disabled={busy || selection.trim() === ''} onClick={() => void rewrite()}>
               改写选中
             </button>
-            <span className="hint">选中一段文字后可请求改写，结果先进入对照，不会直接覆盖</span>
+            <span className="hint">改写结果先进 diff 对照，不直接覆盖</span>
           </div>
         </section>
 
@@ -200,28 +229,26 @@ export function ScriptPage(): React.ReactElement {
             <span className="panel-title">{pending === null ? '版本' : '改写对照'}</span>
           </div>
           {pending === null ? (
-            artifacts.filter((artifact) => artifact.kind === 'script').length === 0 ? (
+            versions.length === 0 ? (
               <p className="hint">还没有保存过版本。</p>
             ) : (
               <ol className="version-list">
-                {artifacts
-                  .filter((artifact) => artifact.kind === 'script')
-                  .map((artifact) => (
-                    <li key={artifact.id}>
-                      <button
-                        className="link-btn"
-                        onClick={() => {
-                          void api.getArtifact(artifact.id).then((result) => {
-                            setText(result.content);
-                            setSavedText(result.content);
-                          });
-                        }}
-                      >
-                        {artifact.path.split('/').pop()}
-                      </button>
-                      <span className="hint">{new Date(artifact.createdAt).toLocaleTimeString('zh-CN')}</span>
-                    </li>
-                  ))}
+                {versions.map((artifact) => (
+                  <li key={artifact.id}>
+                    <button
+                      className="link-btn"
+                      onClick={() => {
+                        void api.getArtifact(artifact.id).then((result) => {
+                          setText(result.content);
+                          setSavedText(result.content);
+                        });
+                      }}
+                    >
+                      {artifact.path.split('/').pop()}
+                    </button>
+                    <span className="hint">{new Date(artifact.createdAt).toLocaleTimeString('zh-CN')}</span>
+                  </li>
+                ))}
               </ol>
             )
           ) : (

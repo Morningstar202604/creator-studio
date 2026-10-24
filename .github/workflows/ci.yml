@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  verify:
+    name: verify (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.11.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r typecheck
+      - run: pnpm -r test
+      - run: pnpm -r build
+      - name: Security audit
+        run: node scripts/security-audit.mjs
+      - name: Contrast audit
+        run: python scripts/check-contrast.py
+
+  desktop:
+    name: desktop bundle (windows)
+    runs-on: windows-latest
+    needs: verify
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.11.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      - name: Stage daemon runtime
+        run: node scripts/install-daemon-deps.mjs
+      - name: Build installer
+        working-directory: apps/desktop
+        run: pnpm tauri build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: creator-studio-nsis
+          path: apps/desktop/src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error

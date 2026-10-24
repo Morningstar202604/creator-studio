@@ -123,8 +123,8 @@ describe('settings page', () => {
   it('lists models from the daemon', async () => {
     window.location.hash = '#/settings';
     render(<App />);
-    await waitFor(() => expect(screen.getByText('OpenAI')).toBeTruthy());
-    expect(screen.getByText('gpt-4o-mini')).toBeTruthy();
+    await waitFor(() => expect(screen.getAllByText('OpenAI').length).toBeGreaterThan(0));
+    expect(screen.getAllByText('gpt-4o-mini').length).toBeGreaterThan(0);
   });
 
   it('shows tool permissions with their modes', async () => {

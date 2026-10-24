@@ -111,7 +111,9 @@ describe('R1 checklist gate', () => {
     const body = (await response.json()) as { ready: boolean; missing: string[]; items: unknown[] };
     expect(body.ready).toBe(false);
     expect(body.missing).toContain('script');
-    expect(body.items.length).toBe(5);
+    expect(body.items.length).toBe(6);
+    // The shot list is optional and must not block the export gate.
+    expect(body.items.find((item: { key: string }) => item.key === 'shotlist')?.required).toBe(false);
   });
 
   it('refuses to export when the checklist is incomplete', async () => {
@@ -162,6 +164,8 @@ describe('R3 full export', () => {
     const entries = readZipEntries(readFileSync(zipPath));
     expect(entries.map((entry) => entry.name).sort()).toEqual(
       [
+        'README.md',
+        'manifest.json',
         'publish/publish-pack.v1.md',
         'research/research-notes.v1.md',
         'script/script.v1.md',

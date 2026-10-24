@@ -4,3 +4,4 @@ export * from './invariants.js';
 export * from './link.js';
 export * from './store.js';
 export * from './artifacts.js';
+export * from './automations.js';

@@ -6,6 +6,8 @@ export * from './run-store.js';
 export * from './project-store.js';
 export * from './artifact-store.js';
 export * from './settings-store.js';
+export * from './automation-store.js';
+export * from './metrics-store.js';
 export { Database };
 
 export type OpenOptions = {

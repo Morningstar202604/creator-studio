@@ -13,6 +13,8 @@ export type ChecklistItem = {
   detail: string;
   /** Route hint the UI can offer to go fix the gap. */
   stage: string;
+  /** Required items gate export; optional ones only inform. */
+  required: boolean;
 };
 
 export type ArtifactSummary = {
@@ -106,11 +108,12 @@ export function buildZip(entries: ZipEntry[], now = new Date()): Buffer {
   return Buffer.concat([...locals, centralBuffer, end]);
 }
 
-const REQUIRED: Array<{ kind: string; key: string; label: string; stage: string }> = [
-  { kind: 'topic-card', key: 'topic', label: '选题卡', stage: 'topic' },
-  { kind: 'research-notes', key: 'research', label: '资料卡', stage: 'research' },
-  { kind: 'script', key: 'script', label: '脚本', stage: 'script' },
-  { kind: 'publish-pack', key: 'package', label: '发布包（标题/简介/标签）', stage: 'package' },
+const REQUIRED: Array<{ kind: string; key: string; label: string; stage: string; required: boolean }> = [
+  { kind: 'topic-card', key: 'topic', label: '选题卡', stage: 'topic', required: true },
+  { kind: 'research-notes', key: 'research', label: '资料卡', stage: 'research', required: true },
+  { kind: 'script', key: 'script', label: '脚本', stage: 'script', required: true },
+  { kind: 'shot-list', key: 'shotlist', label: '分镜表', stage: 'shotlist', required: false },
+  { kind: 'publish-pack', key: 'package', label: '发布包（标题/简介/标签）', stage: 'package', required: true },
 ];
 
 export function buildChecklist(artifacts: ArtifactSummary[]): ChecklistItem[] {
@@ -120,8 +123,9 @@ export function buildChecklist(artifacts: ArtifactSummary[]): ChecklistItem[] {
       key: requirement.key,
       label: requirement.label,
       ok: found.length > 0,
-      detail: found.length > 0 ? `${found.length} 个版本` : '尚未生成',
+      detail: found.length > 0 ? `${found.length} 个版本` : requirement.required ? '尚未生成' : '可选，未生成',
       stage: requirement.stage,
+      required: requirement.required,
     };
   });
 
@@ -131,13 +135,20 @@ export function buildChecklist(artifacts: ArtifactSummary[]): ChecklistItem[] {
     ok: artifacts.some((artifact) => artifact.kind === 'publish-pack'),
     detail: '封面文案包含在发布包中',
     stage: 'package',
+    required: true,
   });
 
   return items;
 }
 
 export function isExportableKind(kind: string): boolean {
-  return kind === 'topic-card' || kind === 'research-notes' || kind === 'script' || kind === 'publish-pack';
+  return (
+    kind === 'topic-card' ||
+    kind === 'research-notes' ||
+    kind === 'script' ||
+    kind === 'shot-list' ||
+    kind === 'publish-pack'
+  );
 }
 
 export function exportFileName(now = new Date()): string {

@@ -149,6 +149,8 @@ describe('R1 schema gate', () => {
     const beforeCount = ((await before.json()) as { artifacts: unknown[] }).artifacts.length;
 
     upstream.reply(JSON.stringify({ cards: [{ title: 'x' }] }));
+    // The pipeline retries once with a literal example, so queue the same bad shape twice.
+    upstream.reply(JSON.stringify({ cards: [{ title: 'x' }] }));
     const result = await generate('topic-card');
 
     expect(result.status).toBe(502);
@@ -158,8 +160,29 @@ describe('R1 schema gate', () => {
     expect(((await after.json()) as { artifacts: unknown[] }).artifacts.length).toBe(beforeCount);
   });
 
+  it('repairs a contract failure with one corrective retry', async () => {
+    const cards = JSON.stringify({
+      cards: [
+        {
+          title: '修复后的选题',
+          angle: '角度',
+          scores: { demand: 80, competition: 40, differentiation: 70, speakability: 60 },
+          composite: 70,
+          rationale: '理由',
+          risks: [],
+        },
+      ],
+    });
+    upstream.reply(JSON.stringify({ cards: 'not-an-array' }));
+    upstream.reply(cards);
+    const result = await generate('topic-card');
+    expect(result.status).toBe(201);
+    expect((result.body.payload as { cards: Array<{ title: string }> }).cards[0]?.title).toBe('修复后的选题');
+  });
+
   it('rejects a non-JSON response', async () => {
     upstream.reply('抱歉，我无法完成这个请求。');
+    upstream.reply('抱歉，我仍然无法完成这个请求。');
     const result = await generate('topic-card');
     expect(result.status).toBe(502);
     expect(result.body.error.code).toBe('MODEL_BAD_OUTPUT');
