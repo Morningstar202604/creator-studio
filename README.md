@@ -146,7 +146,7 @@ packages/
 pnpm -r test            9 个包，386 passed
 pnpm -r build           all Done
 pnpm -r typecheck       all Done
-node scripts/security-audit.mjs   138 files, 5 checks PASS
+node scripts/security-audit.mjs   139 files, 5 checks PASS
 python scripts/check-contrast.py  全部通过
 npx tauri build         CreatorStudio_0.2.0_x64-setup.exe (11.93 MiB)
 python scripts/shoot.py 29 张截图，0 console error，0 横向溢出

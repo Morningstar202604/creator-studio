@@ -686,14 +686,14 @@ v0.1 的 T1–T21 覆盖了「一条链路的骨架」。v0.2 补齐的是**可�
 
 ### 9.1.6 验证基线
 
-9 个包 386 测试；`security-audit` 138 文件 5 类 PASS；对比度全过；Tauri 安装包 11.93 MiB；
+9 个包 386 测试；`security-audit` 139 文件 5 类 PASS；对比度全过；Tauri 安装包 11.93 MiB；
 真实模型（本机 OpenAI 兼容网关，glm-5.3-flash / deepseek-v4.1-flash）6 阶段全通。
 
 ## 10. 变更日志
 
 | 日期 | 变更摘要 | 影响的章节 | 关联任务/ADR | 验证方式 |
 |---|---|---|---|---|
-| 2026-10-24 | v0.2：审批续跑、取消、项目生命周期、分镜/复盘/资料库/自动化四页落地、密钥库、Web 形态、CLI、深色主题与命令面板、生成记账与容错矫正、项目级产物路径 | §6、§7、§9.1 | T22–T30 | `pnpm -r test` 386 passed（9 包）/ typecheck / build / security-audit 138 files PASS / contrast PASS / tauri 11.93 MiB / 真实模型 6 阶段端到端 / 29 张截图 0 console error |
+| 2026-10-24 | v0.2：审批续跑、取消、项目生命周期、分镜/复盘/资料库/自动化四页落地、密钥库、Web 形态、CLI、深色主题与命令面板、生成记账与容错矫正、项目级产物路径 | §6、§7、§9.1 | T22–T30 | `pnpm -r test` 386 passed（9 包）/ typecheck / build / security-audit 139 files PASS / contrast PASS / tauri 11.93 MiB / 真实模型 6 阶段端到端 / 29 张截图 0 console error |
 | 2026-10-23 | 云端安全收口：`/v1/tool` 增加属主校验（跨用户/不存在设备统一 404 遮蔽）；新增 `POST /v1/devices/:id/rotate` 手动令牌轮换（旧令牌立即失效，已吊销 409） | §7.5、§7.3 | T12/T16 加固 | `pnpm -r test` 360 passed（cloud 24）/ typecheck / build / security-audit 117 files PASS / AQG 检查 PASSED |
 | 2026-10-23 | CLOSEOUT 收尾：`/v1/tunnel` 升级握手校验设备令牌（4001/4003）+ 吊销即断开（4002）；脚本页空编辑器一键带入选题/资料产物；发布页 30s 轮询刷新；tools symlink 测试守卫修复并补 realpath 逃逸单测 | §7.3、CLOSEOUT | T13 加固 | `pnpm -r test` 354 passed（cloud 18、desktop 70、tools 61）/ typecheck / build / security-audit 117 files PASS / AQG 检查 PASSED |
 | 2026-10-21 | 初始架构建立 | 全部 | ADR-001~008 | 文档评审 |

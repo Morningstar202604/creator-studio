@@ -134,7 +134,7 @@ Measured on this machine (Windows 11 / Node 24 / Rust 1.99):
 pnpm -r test            9 packages, 386 passed
 pnpm -r build           all Done
 pnpm -r typecheck       all Done
-node scripts/security-audit.mjs   138 files, 5 checks PASS
+node scripts/security-audit.mjs   139 files, 5 checks PASS
 python scripts/check-contrast.py  all checks pass
 npx tauri build         CreatorStudio_0.2.0_x64-setup.exe (11.93 MiB)
 python scripts/shoot.py 29 screenshots, 0 console errors, 0 horizontal overflow

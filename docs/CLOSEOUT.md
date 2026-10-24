@@ -25,7 +25,7 @@ v0.1 已经跑通「一条链路的骨架」。v0.2 把它做成**可交付、�
 pnpm -r test            9 packages, 386 passed
 pnpm -r build           all Done
 pnpm -r typecheck       all Done
-security-audit.mjs      138 files, 5 checks PASS
+security-audit.mjs      139 files, 5 checks PASS
 check-contrast.py       all passed
 tauri build             CreatorStudio_0.2.0_x64-setup.exe (11.93 MiB)
 shoot.py                29 screenshots, 0 console errors, 0 overflow
