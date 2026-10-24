@@ -138,6 +138,7 @@ node scripts/security-audit.mjs   138 files, 5 checks PASS
 python scripts/check-contrast.py  all checks pass
 npx tauri build         CreatorStudio_0.2.0_x64-setup.exe (11.93 MiB)
 python scripts/shoot.py 29 screenshots, 0 console errors, 0 horizontal overflow
+node scripts/smoke-e2e.mjs       real-model e2e: 5 stages + checklist + zip export
 ```
 
 End-to-end against a real model (not a mock): a local OpenAI-compatible gateway with `glm-5.3-flash` and

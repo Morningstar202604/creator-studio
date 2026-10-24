@@ -150,6 +150,7 @@ node scripts/security-audit.mjs   138 files, 5 checks PASS
 python scripts/check-contrast.py  全部通过
 npx tauri build         CreatorStudio_0.2.0_x64-setup.exe (11.93 MiB)
 python scripts/shoot.py 29 张截图，0 console error，0 横向溢出
+node scripts/smoke-e2e.mjs       真实模型端到端：5 阶段生成 + 检查表 + 导出 zip
 ```
 
 真实模型端到端（非 mock）：
