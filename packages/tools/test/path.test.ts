@@ -118,3 +118,41 @@ describe('toWorkspaceRelative', () => {
     expect(() => toWorkspaceRelative(join(outside, 'secret.txt'), root)).toThrowError(/PATH_ESCAPE/);
   });
 });
+
+describe('R4 non-existent target under a short-name root', () => {
+  it('accepts a deep new file when the root needs canonicalisation', () => {
+    // Regression: on Windows CI the temp root is an 8.3 short path while realpath
+    // returns the long form, so comparing the unresolved path with the real root
+    // rejected legitimate new files.
+    const fakeRoot = process.platform === 'win32' ? 'C:/PROGRA~1/ws' : '/tmp/ws-short';
+    const fakeReal = process.platform === 'win32' ? 'C:/Program Files/ws' : '/tmp/ws-real';
+    const result = resolveInsideWorkspace('script/new/deep.md', {
+      workspaceRoot: fakeRoot,
+      realpath: (path) => {
+        if (path.toLowerCase().endsWith('progra~1/ws') || path.endsWith('ws-short')) return fakeReal;
+        if (path.toLowerCase().startsWith('c:/program files/ws') || path.startsWith('/tmp/ws-real')) {
+          const error = new Error('ENOENT') as NodeJS.ErrnoException;
+          error.code = 'ENOENT';
+          throw error;
+        }
+        return path;
+      },
+    });
+    expect(result).toContain('deep.md');
+  });
+
+  it('still rejects escape via a symlinked ancestor', () => {
+    const fakeOutside = join(tmpdir(), 'elsewhere2', 'x.md');
+    expect(() =>
+      resolveInsideWorkspace('link/sub/x.md', {
+        workspaceRoot: root,
+        realpath: (path) => (path.includes('link') ? fakeOutside : path),
+      }),
+    ).toThrowError(/PATH_ESCAPE/);
+  });
+
+  it('rejects a single leading backslash on POSIX too', () => {
+    if (process.platform === 'win32') return;
+    expect(() => resolve('\server\share\file.txt')).toThrowError(/PATH_ESCAPE/);
+  });
+});

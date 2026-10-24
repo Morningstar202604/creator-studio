@@ -1,5 +1,5 @@
 import { realpathSync } from 'node:fs';
-import { isAbsolute, normalize, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 
 export class PathEscapeError extends Error {
   readonly code = 'PATH_ESCAPE';
@@ -44,7 +44,10 @@ export function resolveInsideWorkspace(relativePath: string, options: ResolveOpt
     throw new PathEscapeError(relativePath, 'null byte');
   }
 
-  const looksAbsolute = isAbsolute(relativePath) || /^[A-Za-z]:/.test(relativePath) || relativePath.startsWith('\\\\');
+  // A leading backslash is a UNC path (`\\server\share`) or a root-relative path.
+  // On POSIX it is technically an ordinary filename character, but a caller passing
+  // one is handing us a Windows path, so reject it on every platform.
+  const looksAbsolute = isAbsolute(relativePath) || /^[A-Za-z]:/.test(relativePath) || relativePath.startsWith('\\');
   if (looksAbsolute) {
     throw new PathEscapeError(relativePath, 'absolute path not allowed');
   }
@@ -56,26 +59,52 @@ export function resolveInsideWorkspace(relativePath: string, options: ResolveOpt
     throw new PathEscapeError(relativePath, 'parent traversal');
   }
 
+  const realRoot = canonical(realpath(root), platform);
+
   let real: string;
   try {
     real = canonical(realpath(resolved), platform);
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
-    if (code === 'ENOENT') {
-      const realRoot = canonical(realpath(root), platform);
-      if (!isInside(resolved, realRoot)) {
-        throw new PathEscapeError(relativePath, 'parent traversal via realpath');
-      }
-      return resolved;
+    if (code !== 'ENOENT') throw error;
+
+    // The target does not exist yet (a new file). Canonicalise the nearest existing
+    // ancestor and re-append the remaining segments; comparing the raw (possibly
+    // 8.3 short-name) path against the realpath'd root would wrongly reject valid
+    // paths on Windows.
+    const ancestor = canonical(realpathNearestExisting(resolved, realpath), platform);
+    if (!isInside(ancestor, realRoot)) {
+      throw new PathEscapeError(relativePath, 'parent traversal via realpath');
     }
-    throw error;
+    return resolved;
   }
 
-  const realRoot = canonical(realpath(root), platform);
   if (!isInside(real, realRoot)) {
     throw new PathEscapeError(relativePath, 'symlink escapes workspace');
   }
   return real;
+}
+
+/**
+ * Walks up until a realpath resolves, then appends the missing tail. Only ENOENT
+ * is swallowed; any other filesystem error propagates so callers fail closed.
+ */
+function realpathNearestExisting(target: string, realpath: (path: string) => string): string {
+  const missing: string[] = [];
+  let current = target;
+  while (true) {
+    try {
+      const real = realpath(current);
+      return missing.length === 0 ? real : join(real, ...missing.reverse());
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT') throw error;
+      const parent = dirname(current);
+      if (parent === current) throw error;
+      missing.push(basename(current));
+      current = parent;
+    }
+  }
 }
 
 function defaultRealpath(path: string): string {
