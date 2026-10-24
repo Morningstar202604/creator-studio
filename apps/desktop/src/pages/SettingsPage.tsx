@@ -5,7 +5,15 @@ import { AppShell } from '../components/AppShell';
 import { useTheme, type ThemeMode } from '../lib/theme';
 import { formatCny } from '../lib/format';
 
-type Tab = 'models' | 'grants' | 'budget' | 'appearance';
+type Tab = 'models' | 'memory' | 'grants' | 'budget' | 'appearance';
+
+type EmbeddingStatus = {
+  modelId: string | null;
+  active: string;
+  neural: boolean;
+  indexedChunks: number;
+  mode: 'neural' | 'lexical-local';
+};
 
 type FullModel = ModelInfo & { apiKeyRef: string; keyConfigured: boolean };
 
@@ -33,6 +41,9 @@ export function SettingsPage(): React.ReactElement {
           <button aria-pressed={tab === 'models'} onClick={() => setTab('models')}>
             模型
           </button>
+          <button aria-pressed={tab === 'memory'} onClick={() => setTab('memory')}>
+            记忆
+          </button>
           <button aria-pressed={tab === 'grants'} onClick={() => setTab('grants')}>
             工具权限
           </button>
@@ -46,6 +57,7 @@ export function SettingsPage(): React.ReactElement {
 
         <section>
           {tab === 'models' && <ModelsPanel />}
+          {tab === 'memory' && <MemorySettingsPanel />}
           {tab === 'grants' && <GrantsPanel />}
           {tab === 'budget' && <BudgetPanel />}
           {tab === 'appearance' && <AppearancePanel />}
@@ -266,6 +278,89 @@ function ModelsPanel(): React.ReactElement {
         </div>
       </div>
     </>
+  );
+}
+
+function MemorySettingsPanel(): React.ReactElement {
+  const [status, setStatus] = useState<EmbeddingStatus | null>(null);
+  const [models, setModels] = useState<FullModel[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const [embedding, modelList] = await Promise.all([
+        apiExtra.embeddingStatus(),
+        apiExtra.listModelsFull(),
+      ]);
+      setStatus(embedding);
+      setModels(modelList.models);
+      setError(null);
+    } catch (cause) {
+      setError(cause instanceof ApiError || cause instanceof Error ? cause.message : String(cause));
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const choose = async (modelId: string | null): Promise<void> => {
+    setBusy(true);
+    setNotice(null);
+    try {
+      const result = await apiExtra.setEmbeddingModel(modelId);
+      setNotice(`已切换嵌入模型，重建 ${result.reindexed} 个切片`);
+      await load();
+    } catch (cause) {
+      setError(cause instanceof ApiError || cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="panel">
+      <div className="panel-head">
+        <span className="panel-title">项目记忆</span>
+        <span className={`badge ${status?.neural === true ? 'ok' : 'warn'}`}>
+          {status === null ? '加载中' : status.neural ? '模型向量' : '本地词法向量'}
+        </span>
+      </div>
+      <p className="hint">
+        {status?.neural === true
+          ? '用模型的 /embeddings 做语义检索，能命中换了说法的内容。'
+          : '当前离线：使用本地 n-gram 哈希向量 + FTS5 子串匹配。它能命中相近措辞，但不等同于神经语义检索。配置支持 /embeddings 的模型后可切换为语义检索。'}
+      </p>
+      <div className="form-grid">
+        <label>
+          嵌入模型
+          <select
+            className="input select"
+            aria-label="嵌入模型"
+            value={status?.modelId ?? ''}
+            disabled={busy}
+            onChange={(event) => void choose(event.target.value === '' ? null : event.target.value)}
+          >
+            <option value="">本地（离线，无需模型）</option>
+            {models.map((model) => (
+              <option key={model.id} value={model.id}>
+                {model.name} · {model.model}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <div className="kv">
+        <span>已索引</span>
+        <span>{status?.indexedChunks ?? 0} 个切片</span>
+        <span>当前实现</span>
+        <span className="mono">{status?.active ?? '—'}</span>
+      </div>
+      {notice !== null && <p className="hint">{notice}</p>}
+      {error !== null && <p className="error-text">{error}</p>}
+    </div>
   );
 }
 

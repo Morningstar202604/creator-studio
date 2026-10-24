@@ -2,7 +2,7 @@
 
 > 本文档是本项目的唯一真理源（Single Source of Truth）。
 > 任何影响架构、接口、数据模型、依赖或目录结构的代码变更，都必须同步更新本文档。
-> 最后更新：2026-10-24 ｜ 文档版本：v0.2（已实施，含真实模型端到端验证）
+> 最后更新：2026-10-24 ｜ 文档版本：v0.3（记忆检索 + 多租户隔离）
 
 ## 1. 概述与目标
 
@@ -689,10 +689,54 @@ v0.1 的 T1–T21 覆盖了「一条链路的骨架」。v0.2 补齐的是**可�
 9 个包 386 测试；`security-audit` 139 文件 5 类 PASS；对比度全过；Tauri 安装包 11.93 MiB；
 真实模型（本机 OpenAI 兼容网关，glm-5.3-flash / deepseek-v4.1-flash）6 阶段全通。
 
+## 9.2 v0.3 增量：记忆检索与多租户隔离（2026-10-24）
+
+### 9.2.1 本地记忆索引（`packages/store-sqlite/src/memory-index.ts`）
+
+| 组件 | 说明 |
+|---|---|
+| `memory_chunks` 表 | 迁移 007。每条产物按 600 字 / 80 字重叠切片；记录 `source_ref`、`source_hash`、`chunk_index`、`model`、`dim`、`embedding` |
+| `memory_chunks_fts` | FTS5 虚表，`tokenize='trigram'`（`unicode61` 会把整段中文当一个 token，实际搜不到），三个触发器保持与主表同步 |
+| `chunkText()` | 定长重叠切片，`packages/model-gateway/src/embedding.ts` |
+| `hashEmbedding()` | 确定性 n-gram 特征哈希，256 维、L2 归一化；CJK 走单字 + 相邻二元组，拉丁走词。**这是词法向量，不是神经语义向量**，代码与 UI 都如实标注 |
+| `SqliteMemoryIndex.search()` | 混合检索：FTS5 子串（≥3 字）+ 向量余弦（≥0.15 阈值），用 reciprocal rank fusion 合并；短于 3 字的中文查询走 `LIKE`（trigram 的最小匹配长度限制） |
+| 向量空间隔离 | 每行记录 `model`；只比较同一 `model` 的向量。换嵌入模型会触发重建，不会拿两套不同空间的向量算余弦 |
+
+**增量索引**：写入产物后按 `source_hash` 判断，内容与嵌入模型都没变就跳过；变了先删旧切片再写新的（同一事务）。
+
+**离线优先**：默认使用本地哈希嵌入，不需要任何网络与密钥；设置里显式选择支持 `/embeddings` 的模型后才切到模型向量（`remoteEmbeddings` / `settings.embeddingModel`）。探测失败自动回退，不会让检索失效。
+
+**注入点**：`apps/daemon/src/pipeline.ts` 在生成时检索本项目切片（最多 4 条、每条 1200 字），用 `fenceUntrusted` 包起来，与「上游产物」并列但不互相替代——上游保证顺序一致性，检索补偿跨版本/跨阶段的历史信息。
+
+### 9.2.2 多租户隔离（`apps/cloud/src/store.ts`）
+
+v0.2 的隔离靠路由层逐条 `if`；v0.3 把它下沉到存储层，路由只调带 `userId` 的访问器：
+
+| 访问器 | 语义 |
+|---|---|
+| `devicesOf(userId)` | 只返回本租户设备 |
+| `deviceFor(userId, deviceId)` | 跨租户返回 `null` 并记录 `cross-tenant-read` 安全事件 |
+| `runsOf(userId)` / `runFor(userId, runId)` | 同上；`runFor` 是读与写的前置检查 |
+| `updateRun(userId, runId, patch)` | 只有属主能改；跨租户记录 `cross-tenant-write` |
+| `billingOf(userId)` / `usage(userId)` | 计费与用量按租户聚合，不存在跨租户总量接口 |
+| `POST /v1/runs` 的 `deviceId` | 目标设备不属于调用者时**静默降级为云端 Run**（`deviceId: null`），不报错、不泄露设备是否存在 |
+
+`GET /v1/security-events` 只返回调用者自己的拒绝记录。`/health` 只暴露聚合计数（在线设备数、租户数），不含任何 id。
+
+Postgres 版本应把这些访问器实现为 `WHERE user_id = $1`，并叠加 RLS 作为第二层；接口不变。
+
+### 9.2.3 验证
+
+- `packages/store-sqlite/test/memory-index.test.ts`：17 例（确定性、归一化、相关>不相关、切片、增量跳过、替换、删除、中文两字/长句检索、向量路径、项目隔离、类型过滤、空查询、limit、注入 provider）
+- `apps/daemon/test/features.test.ts` R9/R10：6 例记忆端点 + 3 例嵌入设置 + 1 例记忆注入断言（检查上游收到的 prompt 含检索到的数字）
+- `apps/daemon/test/embedding.test.ts`：2 例，用同时提供 `/chat/completions` 与 `/embeddings` 的假供应商验证「神经路径生效」与「无字面子串也能命中」
+- `apps/cloud/test/cloud.test.ts` R8：5 例跨租户隔离（列表、读写 404、安全事件、降级、用量）
+
 ## 10. 变更日志
 
 | 日期 | 变更摘要 | 影响的章节 | 关联任务/ADR | 验证方式 |
 |---|---|---|---|---|
+| 2026-10-24 | v0.3：本地混合记忆检索（FTS5 trigram + 向量 + RRF，默认离线哈希嵌入，可选模型嵌入）、生成时记忆注入、`/v1/memory/*` 与 `/v1/settings/embedding`；云端多租户隔离下沉到 store（跨租户 404 + 安全事件 + Run 设备降级） | §9.2 | T31–T34 | `pnpm -r test` 421 passed（9 包）/ typecheck / build / security-audit 145 files PASS / contrast PASS / 真实模型验证 |
 | 2026-10-24 | v0.2：审批续跑、取消、项目生命周期、分镜/复盘/资料库/自动化四页落地、密钥库、Web 形态、CLI、深色主题与命令面板、生成记账与容错矫正、项目级产物路径 | §6、§7、§9.1 | T22–T30 | `pnpm -r test` 386 passed（9 包）/ typecheck / build / security-audit 139 files PASS / contrast PASS / tauri 11.93 MiB / 真实模型 6 阶段端到端 / 29 张截图 0 console error |
 | 2026-10-23 | 云端安全收口：`/v1/tool` 增加属主校验（跨用户/不存在设备统一 404 遮蔽）；新增 `POST /v1/devices/:id/rotate` 手动令牌轮换（旧令牌立即失效，已吊销 409） | §7.5、§7.3 | T12/T16 加固 | `pnpm -r test` 360 passed（cloud 24）/ typecheck / build / security-audit 117 files PASS / AQG 检查 PASSED |
 | 2026-10-23 | CLOSEOUT 收尾：`/v1/tunnel` 升级握手校验设备令牌（4001/4003）+ 吊销即断开（4002）；脚本页空编辑器一键带入选题/资料产物；发布页 30s 轮询刷新；tools symlink 测试守卫修复并补 realpath 逃逸单测 | §7.3、CLOSEOUT | T13 加固 | `pnpm -r test` 354 passed（cloud 18、desktop 70、tools 61）/ typecheck / build / security-audit 117 files PASS / AQG 检查 PASSED |

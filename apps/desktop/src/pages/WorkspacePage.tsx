@@ -3,6 +3,7 @@ import type React from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ApiError, api, apiExtra, type Project, type Run, type Step } from '../api';
 import { AppShell, PageHead } from '../components/AppShell';
+import { MemoryPanel } from './MemoryPage';
 import { useRunStream } from '../features/useRunStream';
 import { STAGES, formatCny, relativeTime, stageLink, stageIndex } from '../lib/format';
 
@@ -166,6 +167,7 @@ export function WorkspacePage(): React.ReactElement {
             </div>
           </div>
 
+          <MemoryPanel project={project} />
           <RunPanel project={project} onDone={load} />
           <RecentRuns projectId={project.id} />
         </section>

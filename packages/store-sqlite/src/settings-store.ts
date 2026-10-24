@@ -171,6 +171,25 @@ export class SqliteSettingsStore {
     return value;
   }
 
+  /** Model profile used for embeddings; null means "probe the active chat model". */
+  getEmbeddingModel(): string | null {
+    const row = this.db.prepare('SELECT value FROM settings WHERE key = ?').get('embeddingModel') as
+      | { value: string }
+      | undefined;
+    if (row === undefined) return null;
+    const parsed = JSON.parse(row.value) as { modelId?: unknown };
+    return typeof parsed.modelId === 'string' && parsed.modelId !== '' ? parsed.modelId : null;
+  }
+
+  setEmbeddingModel(modelId: string | null): void {
+    this.db
+      .prepare(
+        `INSERT INTO settings (key, value, updated_at) VALUES ('embeddingModel', ?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+      )
+      .run(JSON.stringify({ modelId }), new Date().toISOString());
+  }
+
   isOnboarded(): boolean {
     const row = this.db.prepare('SELECT value FROM settings WHERE key = ?').get('onboarding') as
       | { value: string }

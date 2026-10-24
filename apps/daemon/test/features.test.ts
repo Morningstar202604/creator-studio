@@ -16,6 +16,7 @@ class Upstream {
   private turns: Scripted[] = [];
   private cursor = 0;
   port = 0;
+  readonly requests: Array<Record<string, unknown>> = [];
 
   async start(): Promise<void> {
     await new Promise<void>((resolve) => this.server.listen(0, '127.0.0.1', resolve));
@@ -29,6 +30,7 @@ class Upstream {
   script(turns: Scripted[]): void {
     this.turns = turns;
     this.cursor = 0;
+    this.requests.length = 0;
   }
 
   get baseUrl(): string {
@@ -36,8 +38,15 @@ class Upstream {
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    for await (const _chunk of req) {
-      // Drain the request so the client sees a well-formed exchange.
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(chunk as Buffer);
+    const raw = Buffer.concat(chunks).toString('utf8');
+    if (raw !== '') {
+      try {
+        this.requests.push(JSON.parse(raw) as Record<string, unknown>);
+      } catch {
+        // Ignore an unparseable body; the response path is what the test asserts.
+      }
     }
     const turn = this.turns[this.cursor];
     this.cursor += 1;
@@ -550,5 +559,154 @@ describe('R8 model profile switching', () => {
       body: JSON.stringify({ apiKey: 'x' }),
     });
     expect(missing.status).toBe(404);
+  });
+});
+
+describe('R9 memory index', () => {
+  it('indexes a saved artifact and finds it by Chinese substring', async () => {
+    const id = await createProject('记忆索引');
+    const saved = await api(`/v1/projects/${id}/artifacts`, {
+      method: 'POST',
+      body: JSON.stringify({
+        kind: 'script',
+        path: 'script/script.v1.md',
+        content: '开场：地方财政的土地出让金，直接决定了你所在城市的公共服务水平。',
+      }),
+    });
+    expect(saved.status).toBe(201);
+
+    const found = await api(`/v1/memory/search?q=${encodeURIComponent('土地出让金')}&projectId=${id}`);
+    expect(found.status).toBe(200);
+    expect(found.body.hits.length).toBeGreaterThan(0);
+    expect(found.body.hits[0].content).toContain('土地出让金');
+    expect(found.body.indexed).toBeGreaterThan(0);
+  });
+
+  it('indexes generated artifacts automatically', async () => {
+    const id = await createProject('自动索引');
+    upstream.script([{ text: validTopic }]);
+    const generated = await api(`/v1/projects/${id}/generate`, {
+      method: 'POST',
+      body: JSON.stringify({ kind: 'topic-card', context: 'AI 与就业' }),
+    });
+    expect(generated.status).toBe(201);
+
+    const found = await api(`/v1/memory/search?q=${encodeURIComponent('初级岗位')}&projectId=${id}`);
+    expect(found.body.hits.length).toBeGreaterThan(0);
+  });
+
+  it('scopes search to the requested project', async () => {
+    const a = await createProject('项目甲');
+    const b = await createProject('项目乙');
+    await api(`/v1/projects/${a}/artifacts`, {
+      method: 'POST',
+      body: JSON.stringify({ kind: 'script', path: 'script/a.md', content: '甲项目独有的关键词：蓝鲸计划' }),
+    });
+    await api(`/v1/projects/${b}/artifacts`, {
+      method: 'POST',
+      body: JSON.stringify({ kind: 'script', path: 'script/b.md', content: '乙项目的内容，讲的是海洋生物学的基础概念' }),
+    });
+
+    const found = await api(`/v1/memory/search?q=${encodeURIComponent('蓝鲸计划')}&projectId=${a}`);
+    expect(found.body.hits.every((hit: { projectId: string }) => hit.projectId === a)).toBe(true);
+
+    const other = await api(`/v1/memory/search?q=${encodeURIComponent('蓝鲸计划')}&projectId=${b}`);
+    expect(other.body.hits.every((hit: { content: string }) => !hit.content.includes('蓝鲸计划'))).toBe(true);
+  });
+
+  it('reindexes existing artifacts on demand', async () => {
+    const id = await createProject('重建索引');
+    await api(`/v1/projects/${id}/artifacts`, {
+      method: 'POST',
+      body: JSON.stringify({ kind: 'research-notes', path: 'research/r.md', content: '待重建的资料来源' }),
+    });
+    await api(`/v1/memory/artifact:missing`, { method: 'DELETE' }).catch(() => null);
+
+    const reindexed = await api('/v1/memory/reindex', {
+      method: 'POST',
+      body: JSON.stringify({ projectId: id }),
+    });
+    expect(reindexed.status).toBe(200);
+    expect(reindexed.body.sources).toBeGreaterThan(0);
+    expect(reindexed.body.totalChunks).toBeGreaterThan(0);
+  });
+
+  it('feeds retrieved memory into the generation prompt', async () => {
+    const id = await createProject('记忆注入');
+    await api(`/v1/projects/${id}/artifacts`, {
+      method: 'POST',
+      body: JSON.stringify({
+        kind: 'research-notes',
+        path: 'research/memory.md',
+        content: '独家事实：某平台 2025 年校招岗位数量同比下降 18%。',
+      }),
+    });
+
+    upstream.script([{ text: validTopic }]);
+    const generated = await api(`/v1/projects/${id}/generate`, {
+      method: 'POST',
+      body: JSON.stringify({ kind: 'topic-card', context: '校招岗位数量变化' }),
+    });
+    expect(generated.status).toBe(201);
+
+    const prompt = JSON.stringify(upstream.requests.at(-1));
+    expect(prompt).toContain('18%');
+    expect(prompt).toContain('过往产物');
+  });
+
+  it('rejects an empty query', async () => {
+    const empty = await api('/v1/memory/search?q=');
+    expect(empty.status).toBe(400);
+  });
+
+  it('removes a source from the index', async () => {
+    const id = await createProject('删除索引');
+    const saved = await api(`/v1/projects/${id}/artifacts`, {
+      method: 'POST',
+      body: JSON.stringify({ kind: 'script', path: 'script/x.md', content: '要被删除的索引内容' }),
+    });
+    const ref = encodeURIComponent(`artifact:${saved.body.artifact.id}`);
+    const removed = await api(`/v1/memory/${ref}`, { method: 'DELETE' });
+    expect(removed.status).toBe(200);
+    expect(removed.body.removed).toBeGreaterThan(0);
+    const again = await api(`/v1/memory/${ref}`, { method: 'DELETE' });
+    expect(again.status).toBe(404);
+  });
+});
+
+describe('R10 embedding settings', () => {
+  it('reports lexical-local mode when no embedding model is configured', async () => {
+    const status = await api('/v1/settings/embedding');
+    expect(status.status).toBe(200);
+    expect(status.body.mode).toBe('lexical-local');
+    expect(status.body.neural).toBe(false);
+    expect(status.body.modelId).toBeNull();
+  });
+
+  it('rejects an unknown embedding model id', async () => {
+    const bad = await api('/v1/settings/embedding', {
+      method: 'POST',
+      body: JSON.stringify({ modelId: 'nope' }),
+    });
+    expect(bad.status).toBe(404);
+  });
+
+  it('accepts the configured model id and reindexes', async () => {
+    const saved = await api('/v1/settings/embedding', {
+      method: 'POST',
+      body: JSON.stringify({ modelId: 'm1' }),
+    });
+    expect(saved.status).toBe(200);
+    expect(saved.body.modelId).toBe('m1');
+    expect(saved.body.reindexed).toBeGreaterThanOrEqual(0);
+
+    const status = await api('/v1/settings/embedding');
+    expect(status.body.modelId).toBe('m1');
+
+    const cleared = await api('/v1/settings/embedding', {
+      method: 'POST',
+      body: JSON.stringify({ modelId: null }),
+    });
+    expect(cleared.body.modelId).toBeNull();
   });
 });

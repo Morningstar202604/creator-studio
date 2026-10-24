@@ -22,7 +22,8 @@
   "dependencies": {
     "@creator-studio/protocol": "workspace:*",
     "better-sqlite3": "13.0.3",
-    "@creator-studio/tools": "workspace:*"
+    "@creator-studio/tools": "workspace:*",
+    "@creator-studio/model-gateway": "workspace:*"
   },
   "devDependencies": {
     "@types/better-sqlite3": "9.6.0",

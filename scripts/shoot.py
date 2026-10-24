@@ -41,6 +41,9 @@ SHOTS = [
     ("20-workspace-1100", None, "light", 1100, 820, "workspace"),
     ("21-projects-900", "#/", "light", 900, 760, None),
     ("22-command-palette", "#/", "light", 1440, 900, "palette"),
+    ("30-memory-light", None, "light", 1440, 900, "memory"),
+    ("31-memory-dark", None, "dark", 1440, 900, "memory"),
+    ("32-settings-memory", "#/settings", "light", 1440, 900, "settings-memory"),
 ]
 
 
@@ -102,6 +105,8 @@ def main() -> int:
             route = hash_route
             if target == "workspace":
                 route = f"#/p/{pid}"
+            elif target == "settings-memory":
+                route = "#/settings"
             elif target is not None and target != "palette":
                 route = f"#/p/{pid}/{target}"
 
@@ -115,6 +120,13 @@ def main() -> int:
             if target == "palette":
                 page.keyboard.press("Control+k")
                 page.wait_for_timeout(400)
+            if target == "settings-memory":
+                page.get_by_role("button", name="记忆").click()
+                page.wait_for_timeout(500)
+            if target == "memory":
+                page.get_by_label("检索项目记忆").fill("初级程序员")
+                page.get_by_role("button", name="检索").click()
+                page.wait_for_timeout(900)
 
             if "review" in name:
                 page.wait_for_timeout(1200)

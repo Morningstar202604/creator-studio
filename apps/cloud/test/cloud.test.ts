@@ -347,3 +347,81 @@ describe('token rotation', () => {
     expect(status).toBe(409);
   });
 });
+
+describe('R8 multi-tenant isolation', () => {
+  async function tenant(userId: string): Promise<{ token: string; deviceId: string }> {
+    // Free is 0 runs/month by design; paid plans are what exercising runs needs.
+    cloud.store.setPlan(userId, 'creator');
+    const start = await api('/v1/pair/start', { method: 'POST', body: JSON.stringify({ userId }) }, '');
+    const done = await api(
+      '/v1/pair/complete',
+      { method: 'POST', body: JSON.stringify({ code: start.body.code, name: userId, os: 'windows' }) },
+      '',
+    );
+    return { token: done.body.token, deviceId: done.body.deviceId };
+  }
+
+  it('never lists another tenant\'s runs', async () => {
+    const a = await tenant('tenant-a');
+    const b = await tenant('tenant-b');
+    await api('/v1/runs', { method: 'POST', body: JSON.stringify({ projectId: 'pa' }) }, a.token);
+    const listed = await api('/v1/runs', {}, b.token);
+    expect(listed.body.runs).toEqual([]);
+  });
+
+  it('hides another tenant\'s run behind 404 on read and write', async () => {
+    const a = await tenant('tenant-c');
+    const b = await tenant('tenant-d');
+    const created = await api('/v1/runs', { method: 'POST', body: JSON.stringify({ projectId: 'pc' }) }, a.token);
+    const runId = created.body.run.id;
+
+    const read = await api(`/v1/runs/${runId}`, {}, b.token);
+    expect(read.status).toBe(404);
+    const patch = await api(`/v1/runs/${runId}`, { method: 'PATCH', body: JSON.stringify({ status: 'failed' }) }, b.token);
+    expect(patch.status).toBe(404);
+
+    const stillQueued = await api(`/v1/runs/${runId}`, {}, a.token);
+    expect(stillQueued.body.run.status).toBe('queued');
+  });
+
+  it('records a security event for a denied cross-tenant read', async () => {
+    const a = await tenant('tenant-e');
+    const b = await tenant('tenant-f');
+    const created = await api('/v1/runs', { method: 'POST', body: JSON.stringify({ projectId: 'pe' }) }, a.token);
+    await api(`/v1/runs/${created.body.run.id}`, {}, b.token);
+
+    const events = await api('/v1/security-events', {}, b.token);
+    expect(events.status).toBe(200);
+    expect(events.body.events.some((event: { kind: string }) => event.kind === 'cross-tenant-read')).toBe(true);
+    // The victim sees none of the attacker's events.
+    const none = await api('/v1/security-events', {}, a.token);
+    expect(none.body.events).toEqual([]);
+  });
+
+  it('silently downgrades a run targeting a foreign device', async () => {
+    const a = await tenant('tenant-g');
+    const b = await tenant('tenant-h');
+    const created = await api(
+      '/v1/runs',
+      { method: 'POST', body: JSON.stringify({ projectId: 'pg', deviceId: a.deviceId, executionMode: 'hybrid' }) },
+      b.token,
+    );
+    expect(created.status).toBe(201);
+    expect(created.body.run.deviceId).toBeNull();
+  });
+
+  it('keeps billing and usage per tenant', async () => {
+    const a = await tenant('tenant-i');
+    const b = await tenant('tenant-j');
+    await api('/v1/runs', { method: 'POST', body: JSON.stringify({ projectId: 'pi' }) }, a.token);
+    await api('/v1/runs', { method: 'POST', body: JSON.stringify({ projectId: 'pi' }) }, a.token);
+
+    const usageA = await api('/v1/usage', {}, a.token);
+    const usageB = await api('/v1/usage', {}, b.token);
+    expect(usageA.body.runs).toBe(2);
+    expect(usageB.body.runs).toBe(0);
+    // Both tenants are on the same paid plan, so only the run count differs.
+    expect(usageA.body.plan.monthlyRuns).toBe(usageB.body.plan.monthlyRuns);
+    expect(usageA.body.plan.monthlyRuns).toBe(30);
+  });
+});

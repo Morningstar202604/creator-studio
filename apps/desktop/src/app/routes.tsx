@@ -13,6 +13,7 @@ import { OnboardingPage } from '../pages/OnboardingPage';
 import { LibraryPage } from '../pages/LibraryPage';
 import { AutomationsPage } from '../pages/AutomationsPage';
 import { ReviewPage } from '../pages/ReviewPage';
+import { ProjectMemoryRoute } from '../pages/MemoryPage';
 import { PlaceholderPage } from '../components/PlaceholderPage';
 
 export const ROUTES = {
@@ -26,6 +27,7 @@ export const ROUTES = {
   package: (id: string) => `/p/${id}/package`,
   publish: (id: string) => `/p/${id}/publish`,
   review: (id: string) => `/p/${id}/review`,
+  memory: (id: string) => `/p/${id}/memory`,
   runs: '/runs',
   approvals: '/approvals',
   library: '/library',
@@ -53,6 +55,7 @@ export function AppRoutes(): React.ReactElement {
           <Route path="/p/:id/package" element={<PackagePage />} />
           <Route path="/p/:id/publish" element={<PublishPage />} />
           <Route path="/p/:id/review" element={<ReviewPage />} />
+          <Route path="/p/:id/memory" element={<ProjectMemoryRoute />} />
           <Route
             path="*"
             element={

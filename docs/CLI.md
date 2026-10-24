@@ -36,6 +36,8 @@ node apps/cli/dist/main.js <command> [args] [--flags]
 | `pipeline <projectId> <context>` | 依次跑选题→资料→脚本→分镜→包装 |
 | `version` | 打印 CLI 版本 |
 
+记忆检索与嵌入设置目前只有 HTTP 接口（`/v1/memory/*`、`/v1/settings/embedding`）与界面入口，CLI 未封装。
+
 `agent` 取值：`producer`｜`scout`｜`researcher`｜`scriptwriter`｜`director`｜`editor`｜`packager`｜`critic`。
 `kind` 取值：`topic-card`｜`research-notes`｜`script`｜`shot-list`｜`publish-pack`｜`review-report`。
 

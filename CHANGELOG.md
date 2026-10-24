@@ -2,6 +2,29 @@
 
 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号用语义化版本。
 
+## [0.3.0] - 2026-10-24
+
+### 新增
+
+- **本地记忆索引**：`memory_chunks` + FTS5 trigram 虚表（迁移 007），产物按 600 字/80 字重叠切片；`source_hash` 增量跳过，变更时同事务替换。
+- **混合检索**：FTS5 子串 + 向量余弦（阈值 0.15 + reciprocal rank fusion）；两字中文查询走 `LIKE`（trigram 最小匹配长度限制）。
+- **离线嵌入**：`hashEmbedding()`（CJK 单字 + 相邻二元组、拉丁词，256 维 L2 归一化），零网络零成本；行内记录 `model`，不同向量空间不混算。
+- **可选模型嵌入**：`ModelGateway.embed()` 调用供应商 `/embeddings`；设置页可指定嵌入模型，切换后自动重建索引，探测失败回退本地。
+- **生成时记忆注入**：`pipeline.ts` 检索本项目最多 4 条切片（每条 1200 字），`fenceUntrusted` 包裹后与上游产物并列注入。
+- **记忆端点**：`GET /v1/memory/search`、`POST /v1/memory/reindex`、`DELETE /v1/memory/:sourceRef`、`GET|POST /v1/settings/embedding`。
+- **云端多租户隔离下沉到存储层**：`devicesOf/deviceFor/runsOf/runFor/updateRun/billingOf`，跨租户读写 404 并记录 `securityEvent`；`GET /v1/security-events` 只返回自己的拒绝记录；Run 指定外部设备时静默降级为云端任务。
+- **界面**：工作台内嵌「项目记忆检索」，新增 `/p/:id/memory` 页面与设置里的「记忆」分区（明示当前是模型向量还是本地词法向量）。
+- **测试**：记忆索引 17 例、记忆端点 7 例、神经嵌入路径 2 例、跨租户隔离 5 例。
+
+### 变更
+
+- `/health` 增加 `memoryChunks`，能力列表增加 `memory`（apiVersion 仍为 3，新增能力按 capability 探测）。
+- 默认嵌入实现是**词法向量**而非神经语义向量；文档、界面与代码注释统一如此表述。
+
+### 修复
+
+- 记忆索引在少于 3 个字符的中文查询上返回空结果（trigram 限制），改为 `LIKE` 回退。
+
 ## [0.2.0] - 2026-10-24
 
 ### 新增

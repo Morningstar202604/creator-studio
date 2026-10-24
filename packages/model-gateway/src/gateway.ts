@@ -22,6 +22,8 @@ export type GatewayOptions = {
   maxRetries?: number | undefined;
   baseDelayMs?: number | undefined;
   maxDelayMs?: number | undefined;
+  /** Embedding model name; defaults to the active chat model. */
+  embeddingModel?: string | undefined;
 };
 
 export type ChatCallOptions = {
@@ -152,6 +154,33 @@ export class ModelGateway {
         attempt += 1;
         await sleep(delay);
       }
+    }
+  }
+
+  /**
+   * Real embeddings when the active provider exposes them (OpenAI-compatible
+   * `/embeddings`), otherwise null so the caller can fall back to the local
+   * lexical provider. Never throws: memory indexing must not break a run.
+   */
+  async embed(texts: string[], profileId?: string): Promise<number[][] | null> {
+    const profile = this.resolveProfile(undefined, profileId);
+    const apiKey = await this.options.resolveKey(profile.apiKeyRef);
+    if (apiKey === null || apiKey === '') return null;
+    const doFetch = this.options.fetchImpl ?? fetch;
+    const base = profile.baseUrl.replace(/\/+$/, '');
+    try {
+      const response = await doFetch(`${base}/embeddings`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({ model: this.options.embeddingModel ?? profile.model, input: texts }),
+      });
+      if (!response.ok) return null;
+      const body = (await response.json()) as { data?: Array<{ embedding?: number[] }> };
+      const vectors = body.data?.map((entry) => entry.embedding ?? []);
+      if (vectors === undefined || vectors.some((vector) => vector.length === 0)) return null;
+      return vectors;
+    } catch {
+      return null;
     }
   }
 

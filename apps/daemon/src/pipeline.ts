@@ -16,11 +16,24 @@ import {
   repairPrompt,
 } from './generate.js';
 
+export type RetrieveFn = (
+  query: string,
+  projectId: string,
+  limit?: number,
+) => Promise<Array<{ kind: string; content: string; sourceRef: string; score: number }>>;
+
 export type GenerateDeps = {
   gateway: ModelGateway;
   artifactStore: SqliteArtifactStore;
   workspaceRoot: string;
+  /** Optional retrieval over the project's memory index (older daemons omit it). */
+  retrieve?: RetrieveFn;
+  /** Called after an artifact is written so the caller can index it. */
+  onArtifactSaved?: (artifact: Artifact) => void | Promise<void>;
 };
+
+export const MEMORY_CONTEXT_LIMIT = 4;
+export const MEMORY_CHAR_LIMIT = 1200;
 
 export type GenerateInput = {
   projectId: string;
@@ -57,15 +70,32 @@ export async function generateArtifact(deps: GenerateDeps, input: GenerateInput)
   }
 
   const base = prompt.user(input.context);
-  const withUpstream =
-    upstreamText === ''
-      ? base
-      : `${base}
 
-以下是本项目的上游产物，请在此基础上继续：
+  // Retrieved memory is *additive* on top of the upstream artifacts: it surfaces
+  // older versions and cross-stage material the pipeline order would miss.
+  let memoryText = '';
+  if (deps.retrieve !== undefined) {
+    try {
+      const hits = await deps.retrieve(`${input.context} ${input.kind}`, input.projectId, MEMORY_CONTEXT_LIMIT);
+      const relevant = hits.filter((hit) => hit.score > 0);
+      if (relevant.length > 0) {
+        memoryText = relevant
+          .map((hit) => fenceUntrusted(hit.content.slice(0, MEMORY_CHAR_LIMIT), `${hit.sourceRef}:${hit.kind}`))
+          .join(String.fromCharCode(10, 10));
+      }
+    } catch {
+      // Retrieval is an enhancement; never let it fail a generation.
+    }
+  }
 
-${upstreamText}`;
-  const userContent = jsonInstruction(withUpstream);
+  const parts = [base];
+  if (memoryText !== '') {
+    parts.push('以下是本项目过往产物中与本次任务相关的片段（可能来自更早版本或其他阶段）：', memoryText);
+  }
+  if (upstreamText !== '') {
+    parts.push('以下是本项目的上游产物，请在此基础上继续：', upstreamText);
+  }
+  const userContent = jsonInstruction(parts.join(String.fromCharCode(10, 10)));
 
   const messages: Array<{ role: 'system' | 'user'; content: string }> = [
     { role: 'system', content: prompt.system },
@@ -117,5 +147,8 @@ ${upstreamText}`;
     mime: 'text/markdown',
   });
 
+  if (deps.onArtifactSaved !== undefined) {
+    await deps.onArtifactSaved(artifact);
+  }
   return { artifact, payload };
 }

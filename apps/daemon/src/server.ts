@@ -8,7 +8,7 @@ import fastifyStatic from '@fastify/static';
 import type { Database } from 'better-sqlite3';
 import type { Run, ToolGrant } from '@creator-studio/protocol';
 import { AgentIdSchema, ProjectStageSchema } from '@creator-studio/protocol';
-import { ModelGateway } from '@creator-studio/model-gateway';
+import { ModelGateway, localEmbeddingProvider, type EmbeddingProvider } from '@creator-studio/model-gateway';
 import { MemoryAuditSink, ToolHost, ToolError, type ToolDefinition } from '@creator-studio/tools';
 import {
   SqliteRunStore,
@@ -17,6 +17,7 @@ import {
   SqliteSettingsStore,
   SqliteAutomationStore,
   SqliteMetricsStore,
+  SqliteMemoryIndex,
   ArtifactCorruptError,
   DEFAULT_BUDGET,
   openDatabase,
@@ -24,7 +25,7 @@ import {
 import { EventBus, SSE_HEARTBEAT_MS, writeHeartbeat, writeSseEvent } from './stream.js';
 import { isGenerateKind } from './generate.js';
 import { buildChecklist, buildZip, exportFileName, isExportableKind } from './publish.js';
-import { generateArtifact, ModelOutputError } from './pipeline.js';
+import { generateArtifact, ModelOutputError, type RetrieveFn } from './pipeline.js';
 import { AgentRunner, type AgentSpec, type RunOutcome } from '@creator-studio/agent-core';
 
 /** Rejects absolute paths and any `..` segment before it reaches the archive. */
@@ -52,6 +53,12 @@ export type DaemonOptions = {
   /** Background scheduler for automations; off in unit tests. */
   scheduler?: boolean;
   now?: () => Date;
+  /**
+   * Probe the model provider for a real `/embeddings` endpoint. Off by default:
+   * most chat-only providers 404 there, and the local hash embedder needs no
+   * network. Turn on when the configured model actually serves embeddings.
+   */
+  remoteEmbeddings?: boolean;
   /** Secret resolver (env/vault). Injecting one keeps tests hermetic. */
   resolveSecret?: (ref: string) => string | null;
   secretStore?: { set(name: string, value: string): string; delete(name: string): void };
@@ -167,6 +174,34 @@ export async function createDaemon(options: DaemonOptions): Promise<Daemon> {
   const metricsStore = new SqliteMetricsStore(db);
   const clock = options.now ?? (() => new Date());
 
+  // Retrieval prefers the provider's `/embeddings`; the probe runs lazily on the
+  // first index call and the chosen provider is then stable for this process. Rows
+  // record the provider id, so vectors from different spaces are never compared.
+  const localEmbedding = localEmbeddingProvider();
+  let embeddingProvider: EmbeddingProvider | null = null;
+  const resolveEmbeddingProvider = async (): Promise<EmbeddingProvider> => {
+    if (embeddingProvider !== null) return embeddingProvider;
+    const configured = settingsStore.getEmbeddingModel();
+    // Probe when an embedding model is explicitly configured, or when the operator
+    // opted in for the chat model. Otherwise stay offline with the local embedder.
+    const shouldProbe = configured !== null || options.remoteEmbeddings === true;
+    const probe = shouldProbe
+      ? await options.modelGateway.embed(['probe'], configured ?? undefined).catch(() => null)
+      : null;
+    embeddingProvider =
+      probe === null || probe.length === 0 || (probe[0]?.length ?? 0) === 0
+        ? localEmbedding
+        : {
+            id: 'remote',
+            neural: true,
+            embed: async (batch) =>
+              (await options.modelGateway.embed(batch, configured ?? undefined).catch(() => null)) ??
+              localEmbedding.embed(batch),
+          };
+    return embeddingProvider;
+  };
+  const memoryIndex = new SqliteMemoryIndex(db, resolveEmbeddingProvider);
+
   // tool_grants references devices(id); register this machine on first boot so
   // per-device grants can be stored without an explicit pairing step.
   db.prepare(
@@ -268,6 +303,7 @@ function isAutomationKind(value: string): value is 'topic-card' | 'research-note
     'metrics',
     'library',
     'resume',
+    'memory',
   ] as const;
   const startedAt = Date.now();
 
@@ -294,10 +330,33 @@ function isAutomationKind(value: string): value is 'topic-card' | 'research-note
     options.secretStore?.delete(id);
   };
 
+  const indexArtifact = async (artifact: { id: string; projectId: string; kind: string; path: string }): Promise<void> => {
+    try {
+      const detail = artifactStore.read(artifact.id);
+      if (detail === null) return;
+      await memoryIndex.index({
+        projectId: artifact.projectId,
+        scope: 'project',
+        kind: artifact.kind as never,
+        content: detail.content,
+        sourceRef: `artifact:${artifact.id}`,
+      });
+    } catch {
+      // Indexing is best effort; a failure must never fail the write that triggered it.
+    }
+  };
+
+  const retrieveFromMemory: RetrieveFn = async (query, projectId, limit = 4) => {
+    const hits = await memoryIndex.search(query, { projectId, limit });
+    return hits.map((hit) => ({ kind: hit.kind, content: hit.content, sourceRef: hit.sourceRef, score: hit.score }));
+  };
+
   const generateDeps = {
     gateway: options.modelGateway,
     artifactStore,
     workspaceRoot: options.workspaceRoot,
+    retrieve: retrieveFromMemory,
+    onArtifactSaved: indexArtifact,
   };
 
   const appendRunEvent = (runId: string, type: 'error' | 'run.finished' | 'budget.warning', payload: unknown): void => {
@@ -333,6 +392,7 @@ function isAutomationKind(value: string): value is 'topic-card' | 'research-note
       artifacts: (db.prepare('SELECT COUNT(*) AS c FROM artifacts').get() as { c: number }).c,
       events: (db.prepare('SELECT COUNT(*) AS c FROM run_events').get() as { c: number }).c,
       automations: automationStore.list().length,
+      memoryChunks: memoryIndex.count(),
     },
   }));
 
@@ -600,6 +660,7 @@ function isAutomationKind(value: string): value is 'topic-card' | 'research-note
         content: body.content,
         mime: kind === 'image' ? 'image/png' : kind === 'audio' ? 'audio/mpeg' : 'text/markdown',
       });
+      await indexArtifact(artifact);
       return reply.code(201).send({ artifact });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -948,6 +1009,34 @@ function isAutomationKind(value: string): value is 'topic-card' | 'research-note
     }
     settingsStore.setGrantMode(options.deviceId, body.tool, body.mode as 'auto');
     return { grants: settingsStore.listGrants(options.deviceId) };
+  });
+
+  app.get('/v1/settings/embedding', async () => ({
+    modelId: settingsStore.getEmbeddingModel(),
+    active: memoryIndex.embedderId,
+    neural: memoryIndex.neural,
+    indexedChunks: memoryIndex.count(),
+    // Offline mode is lexical, not semantic; the UI states this plainly.
+    mode: memoryIndex.neural ? 'neural' : 'lexical-local',
+  }));
+
+  app.post('/v1/settings/embedding', async (request, reply) => {
+    const body = request.body as { modelId?: unknown } | undefined;
+    const modelId = body?.modelId;
+    if (modelId !== null && typeof modelId !== 'string') {
+      return reply.code(400).send({ error: { code: 'INVALID_INPUT', message: 'modelId must be string or null' } });
+    }
+    if (typeof modelId === 'string' && modelId !== '') {
+      const exists = options.modelGateway.listProfiles().some((profile) => profile.id === modelId);
+      if (!exists) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: modelId } });
+    }
+    settingsStore.setEmbeddingModel(typeof modelId === 'string' && modelId !== '' ? modelId : null);
+    // A new embedding model means new vector space: reindex so old rows stay usable.
+    const projects = projectStore.list();
+    for (const project of projects) {
+      for (const artifact of artifactStore.list(project.id)) await indexArtifact(artifact);
+    }
+    return { modelId: settingsStore.getEmbeddingModel(), reindexed: memoryIndex.count() };
   });
 
   app.get('/v1/settings/budget', async () => ({ budget: settingsStore.getBudget() }));
@@ -1434,6 +1523,56 @@ ${body.text}`,
     const { id } = request.params as { id: string };
     if (!metricsStore.delete(id)) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: id } });
     return reply.code(204).send();
+  });
+
+  app.get('/v1/memory/search', async (request, reply) => {
+    const query = request.query as { q?: string; projectId?: string; limit?: string; kind?: string };
+    if (typeof query.q !== 'string' || query.q.trim() === '') {
+      return reply.code(400).send({ error: { code: 'INVALID_INPUT', message: 'q is required' } });
+    }
+    const limit = Math.min(Number.parseInt(query.limit ?? '6', 10) || 6, 20);
+    const kinds = query.kind === undefined || query.kind === '' ? undefined : ([query.kind] as never);
+    const hits = await memoryIndex.search(query.q, {
+      ...(query.projectId === undefined || query.projectId === '' ? {} : { projectId: query.projectId }),
+      limit,
+      ...(kinds === undefined ? {} : { kinds }),
+    });
+    return {
+      hits,
+      embedder: memoryIndex.embedderId,
+      neural: memoryIndex.neural,
+      indexed: memoryIndex.count(query.projectId === '' ? undefined : query.projectId),
+    };
+  });
+
+  app.post('/v1/memory/reindex', async (request, reply) => {
+    const body = request.body as { projectId?: unknown } | undefined;
+    const projects =
+      typeof body?.projectId === 'string'
+        ? projectStore.list().filter((project) => project.id === body.projectId)
+        : projectStore.list();
+    if (projects.length === 0) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: 'project' } });
+
+    let chunks = 0;
+    let sources = 0;
+    for (const project of projects) {
+      for (const artifact of artifactStore.list(project.id)) {
+        const before = memoryIndex.count(project.id);
+        await indexArtifact(artifact);
+        const after = memoryIndex.count(project.id);
+        chunks += Math.max(0, after - before);
+        sources += 1;
+      }
+    }
+    return { projects: projects.length, sources, newChunks: chunks, totalChunks: memoryIndex.count() };
+  });
+
+  app.delete('/v1/memory/:sourceRef', async (request, reply) => {
+    const { sourceRef } = request.params as { sourceRef: string };
+    const decoded = decodeURIComponent(sourceRef);
+    const removed = memoryIndex.remove(decoded.startsWith('artifact:') ? decoded : `artifact:${decoded}`);
+    if (removed === 0) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: decoded } });
+    return { removed };
   });
 
   app.get('/v1/dashboard', async () => {

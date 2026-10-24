@@ -29,7 +29,7 @@
 |---|---|
 | ![发布](docs/screenshots/08-publish-light.png) | ![深色](docs/screenshots/15-projects-dark.png) |
 
-更多截图见 [`docs/screenshots/`](docs/screenshots/)（29 张，含 1100 / 900 宽度响应式与命令面板）。
+更多截图见 [`docs/screenshots/`](docs/screenshots/)（32 张，含 1100 / 900 宽度响应式、命令面板、记忆检索与深色主题）。
 演示录屏：[`docs/media/demo.mp4`](docs/media/demo.mp4)（24 秒）· [`docs/media/demo.gif`](docs/media/demo.gif)。
 
 ## 快速开始
@@ -98,7 +98,9 @@ node apps/daemon/dist/main.js --port 7878
 | 发布包 | 检查表全绿才允许导出；zip 内含全部产物 + `README.md` + `manifest.json`（逐文件 sha256） |
 | 自动化 | 按间隔（每小时…每周）为指定项目重新生成某类产物；daemon 内置调度，也可「立即运行」 |
 | 资料库 | 跨项目产物检索、类型筛选、内容预览 |
+| 项目记忆 | 所有产物切片化索引，混合检索（FTS5 子串 + 向量），生成时自动注入相关历史片段；默认离线哈希嵌入，可切到模型的 `/embeddings` |
 | 复盘 | 手工回填播放/点赞/评论/完播/收益，ECharts 趋势与环比 |
+| 多租户隔离 | 云端存储层按 `userId` 作用域，跨租户读写一律 404 并记安全事件；Run 指定外部设备时静默降级为云端任务 |
 | 主题 | 浅色 / 深色 / 跟随系统，全部 token 化并做过 WCAG 对比度核算 |
 | 命令面板 | `Ctrl/Cmd + K` 搜项目、跳页面；`Ctrl+Shift+A` 直达待办 |
 
@@ -143,13 +145,13 @@ packages/
 在本机（Windows 11 / Node 24 / Rust 1.99）实测，命令与结果：
 
 ```
-pnpm -r test            9 个包，386 passed
+pnpm -r test            9 个包，421 passed
 pnpm -r build           all Done
 pnpm -r typecheck       all Done
-node scripts/security-audit.mjs   139 files, 5 checks PASS
+node scripts/security-audit.mjs   145 files, 5 checks PASS
 python scripts/check-contrast.py  全部通过
 npx tauri build         CreatorStudio_0.2.0_x64-setup.exe (11.93 MiB)
-python scripts/shoot.py 29 张截图，0 console error，0 横向溢出
+python scripts/shoot.py 25 张截图（+7 张演示截图，共 32），0 console error，0 横向溢出
 node scripts/smoke-e2e.mjs       真实模型端到端：5 阶段生成 + 检查表 + 导出 zip
 ```
 
@@ -171,7 +173,7 @@ node scripts/smoke-e2e.mjs       真实模型端到端：5 阶段生成 + 检查
 
 ```bash
 pnpm install
-pnpm -r test           # 386 tests
+pnpm -r test           # 421 tests
 pnpm -r typecheck
 pnpm -r build
 python scripts/shoot.py --base http://127.0.0.1:7878   # 真浏览器截图 + 布局断言
@@ -185,9 +187,9 @@ python scripts/shoot.py --base http://127.0.0.1:7878   # 真浏览器截图 + �
 
 ## 已知边界
 
-1. 云端为单机内存实现，未接 Postgres/Redis；重启丢云端状态（本地数据不受影响）。
+1. 云端为单机内存实现，未接 Postgres/Redis；重启丢云端状态（本地数据不受影响）。多租户隔离已在存储层实现并有测试，但换 Postgres 时需把同样的 `WHERE user_id` 谓词与 RLS 搬过去。
 2. 自动更新未实现（无代码签名证书），NSIS 包需手动升级。
-3. 语义检索 / 向量记忆未实现，跨阶段上下文靠上游产物拼接。
+3. 默认记忆检索是**词法向量 + 子串匹配**（离线、零成本），不是神经语义模型；只有在设置里指定支持 `/embeddings` 的模型后才做真正的语义检索。这一点在界面与代码里都明确标注，不把词法匹配说成语义理解。
 4. 「8 小时降到 2 小时」是产品假设，尚未做真人计时。
 
 ## 许可证

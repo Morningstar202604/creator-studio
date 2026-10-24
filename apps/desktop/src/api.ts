@@ -419,6 +419,52 @@ export const apiExtra = {
 
   dashboard: (): Promise<Dashboard> => request('/v1/dashboard'),
 
+  memorySearch: (
+    q: string,
+    projectId?: string,
+    limit = 6,
+  ): Promise<{
+    hits: Array<{
+      id: string;
+      projectId: string | null;
+      kind: string;
+      content: string;
+      sourceRef: string;
+      chunkIndex: number;
+      score: number;
+      via: 'vector' | 'lexical' | 'hybrid';
+    }>;
+    embedder: string;
+    neural: boolean;
+    indexed: number;
+  }> => {
+    const search = new URLSearchParams({ q, limit: String(limit) });
+    if (projectId !== undefined && projectId !== '') search.set('projectId', projectId);
+    return request(`/v1/memory/search?${search.toString()}`);
+  },
+
+  embeddingStatus: (): Promise<{
+    modelId: string | null;
+    active: string;
+    neural: boolean;
+    indexedChunks: number;
+    mode: 'neural' | 'lexical-local';
+  }> => request('/v1/settings/embedding'),
+
+  setEmbeddingModel: (modelId: string | null): Promise<{ modelId: string | null; reindexed: number }> =>
+    request('/v1/settings/embedding', { method: 'POST', body: JSON.stringify({ modelId }) }),
+
+  memoryReindex: (projectId?: string): Promise<{
+    projects: number;
+    sources: number;
+    newChunks: number;
+    totalChunks: number;
+  }> =>
+    request('/v1/memory/reindex', {
+      method: 'POST',
+      body: JSON.stringify(projectId === undefined ? {} : { projectId }),
+    }),
+
   automations: (projectId?: string): Promise<{ automations: Automation[] }> =>
     request(`/v1/automations${projectId === undefined ? '' : `?projectId=${projectId}`}`),
 

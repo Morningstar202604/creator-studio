@@ -8,6 +8,7 @@ export * from './artifact-store.js';
 export * from './settings-store.js';
 export * from './automation-store.js';
 export * from './metrics-store.js';
+export * from './memory-index.js';
 export { Database };
 
 export type OpenOptions = {

@@ -31,7 +31,7 @@ deletes your footage on its own.
 |---|---|
 | ![Publish](docs/screenshots/08-publish-light.png) | ![Dark](docs/screenshots/15-projects-dark.png) |
 
-More in [`docs/screenshots/`](docs/screenshots/) (29 shots, including 1100/900 px responsive layouts and the command palette).
+More in [`docs/screenshots/`](docs/screenshots/) (32 shots, including 1100/900 px responsive layouts, the command palette, memory search and dark theme).
 Demo recording: [`docs/media/demo.mp4`](docs/media/demo.mp4) · [`docs/media/demo.gif`](docs/media/demo.gif).
 
 ## Quick start
@@ -93,7 +93,9 @@ Any OpenAI-compatible endpoint works (OpenAI, DeepSeek, Qwen, Kimi, GLM, Ollama,
 | Publish pack | Export is gated on a green checklist; the zip contains all artifacts plus `README.md` and a `manifest.json` with per-file sha256 |
 | Automations | Interval-based regeneration per project (hourly … weekly), scheduler inside the daemon, plus "run now" |
 | Library | Cross-project artifact search, type filter, inline preview |
+| Memory | Every artifact is chunk-indexed and searched with hybrid FTS5 substring + vector ranking; relevant history is injected into generation. Offline hash embeddings by default, switchable to a provider's `/embeddings` |
 | Review | Manual views/likes/comments/retention/revenue entry with ECharts trends and period-over-period deltas |
+| Multi-tenancy | Cloud storage is scoped by `userId`: cross-tenant reads/writes are 404 and logged as security events; a run targeting a foreign device degrades to a cloud-only run |
 | Theming | Light / dark / system, all tokenized and contrast-checked |
 | Command palette | `Ctrl/Cmd + K` to jump to projects or pages; `Ctrl+Shift+A` for approvals |
 
@@ -131,13 +133,13 @@ Design details: [`ARCHITECTURE.md`](ARCHITECTURE.md). HTTP surface: [`docs/API.m
 Measured on this machine (Windows 11 / Node 24 / Rust 1.99):
 
 ```
-pnpm -r test            9 packages, 386 passed
+pnpm -r test            9 packages, 421 passed
 pnpm -r build           all Done
 pnpm -r typecheck       all Done
-node scripts/security-audit.mjs   139 files, 5 checks PASS
+node scripts/security-audit.mjs   145 files, 5 checks PASS
 python scripts/check-contrast.py  all checks pass
 npx tauri build         CreatorStudio_0.2.0_x64-setup.exe (11.93 MiB)
-python scripts/shoot.py 29 screenshots, 0 console errors, 0 horizontal overflow
+python scripts/shoot.py 25 screenshots (+7 demo shots, 32 total), 0 console errors, 0 horizontal overflow
 node scripts/smoke-e2e.mjs       real-model e2e: 5 stages + checklist + zip export
 ```
 
@@ -167,9 +169,9 @@ python scripts/shoot.py --base http://127.0.0.1:7878
 
 ## Known limits
 
-1. The cloud app is a single-process in-memory implementation — no Postgres/Redis yet.
+1. The cloud app is a single-process in-memory implementation — no Postgres/Redis yet. Multi-tenant isolation is enforced in the store with tests, but the same `WHERE user_id` predicates and RLS must be carried over when Postgres lands.
 2. No auto-update (no code-signing certificate); NSIS installers upgrade manually.
-3. No semantic retrieval / vector memory yet; stage context comes from upstream artifacts.
+3. Default memory search is **lexical vectors plus substring matching** — offline and free, not a neural semantic model. Real semantic search requires selecting an `/embeddings`-capable model in settings. The UI and the code both say so.
 4. The "8 hours to 2 hours" efficiency claim is a product hypothesis, not a measured result.
 
 ## License

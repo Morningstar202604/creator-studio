@@ -1,6 +1,7 @@
 export * from './errors.js';
 export * from './sse.js';
 export * from './json-hint.js';
+export * from './embedding.js';
 export * from './types.js';
 export * from './openai.js';
 export * from './anthropic.js';

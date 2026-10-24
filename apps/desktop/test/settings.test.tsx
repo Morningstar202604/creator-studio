@@ -81,6 +81,37 @@ vi.mock('../src/api', async () => {
         budget: { monthlyCostCny: 120, perProjectCostCny: 8, warnAtPercent: 70 },
       })),
     },
+    apiExtra: {
+      ...actual.apiExtra,
+      embeddingStatus: vi.fn(async () => ({
+        modelId: null,
+        active: 'hash-ngram',
+        neural: false,
+        indexedChunks: 12,
+        mode: 'lexical-local' as const,
+      })),
+      setEmbeddingModel: vi.fn(async () => ({ modelId: null, reindexed: 12 })),
+      listModelsFull: vi.fn(async () => ({
+        models: [
+          {
+            id: 'm1',
+            name: 'OpenAI',
+            provider: 'openai-compatible',
+            baseUrl: 'https://api.openai.com/v1',
+            model: 'gpt-4o-mini',
+            contextWindow: 128000,
+            priceInPerM: 1,
+            priceOutPerM: 2,
+            isLocal: false,
+            apiKeyRef: 'env:MODEL_API_KEY',
+            keyConfigured: true,
+            source: 'stored',
+          },
+        ],
+        activeModelId: 'm1',
+        source: 'stored',
+      })),
+    },
   };
 });
 
@@ -157,5 +188,23 @@ describe('settings page', () => {
     await user.type(monthly, '120');
     await user.click(screen.getByRole('button', { name: '保存' }));
     await waitFor(() => expect(mocked.setBudget).toHaveBeenCalled());
+  });
+});
+
+describe('memory settings', () => {
+  it('shows the offline lexical mode and lists embedding models', async () => {
+    window.location.hash = '#/settings';
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: '记忆' }));
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { level: 1 }).textContent).toContain('设置');
+    });
+    await waitFor(() => {
+      expect(screen.getByText(/本地 n-gram 哈希向量/)).toBeTruthy();
+    });
+    const select = screen.getByLabelText('嵌入模型') as HTMLSelectElement;
+    expect(select.value).toBe('');
+    expect(screen.getByText('hash-ngram')).toBeTruthy();
   });
 });

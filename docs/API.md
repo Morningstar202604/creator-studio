@@ -90,6 +90,22 @@ Base：`http://127.0.0.1:7878`（daemon 默认只绑回环）。所有响应为 
 
 调度器每 30 秒检查到期规则；daemon 关闭期间不执行（本地优先的取舍）。
 
+## 记忆检索
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/v1/memory/search` | `?q=`（必填）、`?projectId=`、`?limit=`（≤20）、`?kind=`；返回 `hits`（含 `via: lexical/vector/hybrid` 与 `score`）、`embedder`、`neural`、`indexed` |
+| POST | `/v1/memory/reindex` | `{ projectId? }`；重建指定项目或全部项目的切片 |
+| DELETE | `/v1/memory/:sourceRef` | 删除一个来源（`artifact:<id>`，省略前缀会自动补） |
+| GET | `/v1/settings/embedding` | 当前嵌入模型、实现 id、是否神经、已索引切片数、`mode: neural \| lexical-local` |
+| POST | `/v1/settings/embedding` | `{ modelId: string \| null }`；切换后自动重建索引 |
+
+检索语义：
+
+- 查询 ≥ 3 字符走 FTS5 trigram；< 3 字符走 `LIKE`（trigram 无法匹配更短的串）。
+- 向量路径只比较同一 `model` 的行，余弦低于 `0.15` 的候选被丢弃，避免词法哈希噪声。
+- 默认 `embedder` 是 `hash-ngram`（离线）；配置了支持 `/embeddings` 的模型后为 `remote`。
+
 ## 复盘数据
 
 | 方法 | 路径 | 说明 |
@@ -111,5 +127,7 @@ Base：`http://127.0.0.1:7878`（daemon 默认只绑回环）。所有响应为 
 | POST/GET/PATCH | `/v1/runs…` | 云端运行记录与配额 |
 | POST | `/v1/tool` | 经隧道下发工具调用（仅限同用户设备） |
 | GET | `/v1/usage`、`/v1/plans` | 用量与套餐 |
+| GET | `/v1/security-events` | 本租户的跨租户拒绝记录（不含他人数据） |
+| GET | `/v1/runs/:id` | 单条运行（跨租户 404） |
 
 WebSocket：`/v1/tunnel?deviceId=…&token=…`，由本地 daemon 主动拨入。

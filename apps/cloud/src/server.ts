@@ -71,8 +71,10 @@ export function createCloud(options: CloudOptions = {}): CloudApp {
       return send(res, 200, {
         ok: true,
         service: 'creator-studio-cloud',
-        devices: tunnel.online().length,
+        onlineDevices: tunnel.online().length,
+        // Aggregate counts only; no tenant identifiers in an unauthenticated route.
         runs: store.runs.size,
+        tenants: new Set([...store.devices.values()].map((entry) => entry.userId)).size,
       });
     }
 
@@ -121,8 +123,8 @@ export function createCloud(options: CloudOptions = {}): CloudApp {
     }
 
     if (path === '/v1/devices' && method === 'GET') {
-      const mine = [...store.devices.values()]
-        .filter((entry) => entry.userId === device.userId)
+      const mine = store
+        .devicesOf(device.userId)
         .map((entry) => ({
           id: entry.id,
           name: entry.name,
@@ -136,9 +138,10 @@ export function createCloud(options: CloudOptions = {}): CloudApp {
 
     if (path.startsWith('/v1/devices/') && path.endsWith('/rotate') && method === 'POST') {
       const targetId = path.slice('/v1/devices/'.length, -'/rotate'.length);
-      const target = store.devices.get(targetId);
-      // Same 404 masking as DELETE: never reveal another user's device existence.
-      if (target === undefined || target.userId !== device.userId) {
+      // Tenant-scoped lookup: a foreign device is indistinguishable from a missing
+      // one, and the store records the attempt as a security event.
+      const target = store.deviceFor(device.userId, targetId);
+      if (target === null) {
         return send(res, 404, { error: { code: 'NOT_FOUND', message: targetId } });
       }
       if (target.revokedAt !== null) {
@@ -150,8 +153,8 @@ export function createCloud(options: CloudOptions = {}): CloudApp {
 
     if (path.startsWith('/v1/devices/') && method === 'DELETE') {
       const targetId = path.slice('/v1/devices/'.length);
-      const target = store.devices.get(targetId);
-      if (target === undefined || target.userId !== device.userId) {
+      const target = store.deviceFor(device.userId, targetId);
+      if (target === null) {
         return send(res, 404, { error: { code: 'NOT_FOUND', message: targetId } });
       }
       store.revokeDevice(targetId);
@@ -169,10 +172,17 @@ export function createCloud(options: CloudOptions = {}): CloudApp {
           error: { code: 'PLAN_LIMIT', message: `${used}/${plan.monthlyRuns} runs used this month` },
         });
       }
+      // A run may only target a device the caller owns; otherwise it silently
+      // becomes a cloud-only run instead of pointing at a foreign tunnel.
+      const requestedDevice = typeof body.deviceId === 'string' ? body.deviceId : null;
+      const ownedDevice =
+        requestedDevice !== null && store.deviceFor(device.userId, requestedDevice) !== null
+          ? requestedDevice
+          : null;
       const run: CloudRun = {
         id: randomUUID(),
         userId: device.userId,
-        deviceId: typeof body.deviceId === 'string' ? body.deviceId : null,
+        deviceId: ownedDevice,
         projectId: typeof body.projectId === 'string' ? body.projectId : '',
         agentId: typeof body.agentId === 'string' ? body.agentId : 'scriptwriter',
         status: 'queued',
@@ -187,29 +197,34 @@ export function createCloud(options: CloudOptions = {}): CloudApp {
     }
 
     if (path === '/v1/runs' && method === 'GET') {
-      const mine = [...store.runs.values()]
-        .filter((run) => run.userId === device.userId)
-        .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-      return send(res, 200, { runs: mine });
+      return send(res, 200, { runs: store.runsOf(device.userId) });
+    }
+
+    if (path.startsWith('/v1/runs/') && method === 'GET') {
+      const runId = path.slice('/v1/runs/'.length);
+      const run = store.runFor(device.userId, runId);
+      if (run === null) return send(res, 404, { error: { code: 'NOT_FOUND', message: runId } });
+      return send(res, 200, { run });
     }
 
     if (path.startsWith('/v1/runs/') && method === 'PATCH') {
       const runId = path.slice('/v1/runs/'.length);
-      const run = store.runs.get(runId);
-      if (run === undefined || run.userId !== device.userId) {
+      if (store.runFor(device.userId, runId) === null) {
         return send(res, 404, { error: { code: 'NOT_FOUND', message: runId } });
       }
       const body = await readJson(req);
+      const patch: { status?: CloudRun['status']; error?: string } = {};
       if (typeof body.status === 'string') {
         const allowed = ['queued', 'running', 'succeeded', 'failed'];
         if (!allowed.includes(body.status)) {
           return send(res, 400, { error: { code: 'INVALID_INPUT', message: 'unknown status' } });
         }
-        run.status = body.status as CloudRun['status'];
-        if (run.status === 'succeeded' || run.status === 'failed') run.endedAt = clock().toISOString();
+        patch.status = body.status as CloudRun['status'];
       }
-      if (typeof body.error === 'string') run.error = body.error;
-      return send(res, 200, { run });
+      if (typeof body.error === 'string') patch.error = body.error;
+      const updated = store.updateRun(device.userId, runId, patch);
+      if (updated === null) return send(res, 404, { error: { code: 'NOT_FOUND', message: runId } });
+      return send(res, 200, { run: updated });
     }
 
     // --- tunnel-mediated tool call: proves the cloud can reach local fs ---
@@ -218,8 +233,8 @@ export function createCloud(options: CloudOptions = {}): CloudApp {
       const targetDevice = typeof body.deviceId === 'string' ? body.deviceId : device.id;
       // A device may only drive tunnels of devices owned by the same user; unknown
       // ids get the same 404 so existence is not leaked either way.
-      const target = store.devices.get(targetDevice);
-      if (target === undefined || target.userId !== device.userId) {
+      const target = store.deviceFor(device.userId, targetDevice);
+      if (target === null) {
         return send(res, 404, { error: { code: 'NOT_FOUND', message: targetDevice } });
       }
       if (typeof body.name !== 'string') {
@@ -252,6 +267,13 @@ export function createCloud(options: CloudOptions = {}): CloudApp {
 
     if (path === '/v1/plans' && method === 'GET') {
       return send(res, 200, { plans: PLANS });
+    }
+
+    // Tenant-scoped audit of denied cross-tenant access attempts. Admin/debug only:
+    // it exposes ids, never payloads, and only for the caller's own tenant.
+    if (path === '/v1/security-events' && method === 'GET') {
+      const mine = store.securityEvents.filter((event) => event.actorUserId === device.userId);
+      return send(res, 200, { events: mine });
     }
 
     return send(res, 404, { error: { code: 'NOT_FOUND', message: path } });

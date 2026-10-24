@@ -98,6 +98,9 @@ async function main(): Promise<void> {
     logger: false,
     resolveSecret: (ref) => vault.get(ref),
     secretStore: vault,
+    // Opt in with --remote-embeddings when the provider serves /embeddings; the
+    // default local hash embedder needs no network and never fails.
+    remoteEmbeddings: args['remote-embeddings'] === 'true',
     ...(webRoot === undefined ? {} : { webRoot }),
   });
 
