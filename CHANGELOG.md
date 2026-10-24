@@ -2,6 +2,15 @@
 
 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号用语义化版本。
 
+## [0.3.1] - 2026-10-24
+
+### 修复
+
+- **CI 从未通过**：干净 checkout 上 `typecheck` 先于 `build` 运行，而 workspace 包通过已产出的 `dist/*.d.ts` 互相解析（`dist` 不入库），导致 `Cannot find module '@creator-studio/protocol'`。根脚本改为 build → typecheck → test，CI 收敛为单条 `pnpm verify`，顺序不会再漂移。
+- **路径沙箱在 Windows 上误拒合法新文件**：目标不存在时，用未展开的短路径（8.3 名）与 realpath 展开后的根比较，被判定为 `parent traversal via realpath`。改为向上找到最近的已存在祖先做 realpath，再拼回尾部。
+- **路径沙箱在 POSIX 上放过单反斜杠路径**：原先只拒绝 `\\server`，`\server\share` 可通过绝对路径检查。现在任何平台都以反斜杠开头的输入一律拒绝。
+- CI 增加 `actions/setup-python`（Ubuntu runner 上 `python` 不保证存在）。
+
 ## [0.3.0] - 2026-10-24
 
 ### 新增
