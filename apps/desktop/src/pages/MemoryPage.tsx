@@ -3,7 +3,7 @@ import type React from 'react';
 import { useParams } from 'react-router-dom';
 import { ApiError, api, apiExtra, type Project } from '../api';
 import { AppShell } from '../components/AppShell';
-import { ARTIFACT_LABELS, relativeTime } from '../lib/format';
+import { ARTIFACT_LABELS } from '../lib/format';
 
 type Hit = Awaited<ReturnType<typeof apiExtra.memorySearch>>['hits'][number];
 
@@ -122,64 +122,6 @@ export function MemoryPanel({ project }: { project: Project }): React.ReactEleme
         </div>
       )}
     </div>
-  );
-}
-
-/**
- * Global memory search used by the library page: same API, all projects, so an
- * idea from one video can be found while working on another.
- */
-export function useMemorySearch(projectId?: string): {
-  query: string;
-  setQuery: (value: string) => void;
-  hits: Hit[];
-  meta: { embedder: string; neural: boolean; indexed: number } | null;
-  busy: boolean;
-  error: string | null;
-  run: () => Promise<void>;
-} {
-  const [query, setQuery] = useState('');
-  const [hits, setHits] = useState<Hit[]>([]);
-  const [meta, setMeta] = useState<{ embedder: string; neural: boolean; indexed: number } | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const run = useCallback(async (): Promise<void> => {
-    if (query.trim() === '') return;
-    setBusy(true);
-    setError(null);
-    try {
-      const result = await apiExtra.memorySearch(query.trim(), projectId);
-      setHits(result.hits);
-      setMeta({ embedder: result.embedder, neural: result.neural, indexed: result.indexed });
-    } catch (cause) {
-      setError(cause instanceof ApiError || cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setBusy(false);
-    }
-  }, [query, projectId]);
-
-  return { query, setQuery, hits, meta, busy, error, run };
-}
-
-export function MemoryHits({ hits }: { hits: Hit[] }): React.ReactElement {
-  const [open, setOpen] = useState<string | null>(null);
-  return (
-    <ul className="memory-list">
-      {hits.map((hit) => (
-        <li key={hit.id}>
-          <button className="memory-hit" onClick={() => setOpen(open === hit.id ? null : hit.id)}>
-            <span className={`badge ${hit.via === 'lexical' ? 'info' : hit.via === 'vector' ? 'ok' : 'warn'}`}>
-              {VIA_LABEL[hit.via]}
-            </span>
-            <span className="memory-kind">{ARTIFACT_LABELS[hit.kind] ?? hit.kind}</span>
-            <span className="memory-snippet">{hit.content.slice(0, 110)}</span>
-            <span className="hint">{relativeTime(null)}</span>
-          </button>
-          {open === hit.id && <pre className="output preview-text">{hit.content}</pre>}
-        </li>
-      ))}
-    </ul>
   );
 }
 

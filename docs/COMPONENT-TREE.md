@@ -310,6 +310,18 @@ ReviewPage*
 
 图表用 ECharts，不自绘；数据不足时显示 `InsufficientDataNotice`。
 
+### P18 记忆检索 `/p/:id/memory`（v0.3）
+
+```
+ProjectMemoryRoute
+├─ AppShell
+└─ MemoryPanel (project)          # 同一组件也内嵌在 P2 工作台
+   ├─ 检索输入 + 检索 / 重建索引
+   ├─ 状态行：切片数 · 当前嵌入实现（模型向量 / 本地词法向量）
+   ├─ MemoryHit 列表（via：关键词命中 / 语义相近 / 两种都命中）
+   └─ 切片预览（sourceRef + 原文）
+```
+
 ### P10 任务 `/runs`
 
 ```
