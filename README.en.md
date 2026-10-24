@@ -115,14 +115,14 @@ See [`docs/CLI.md`](docs/CLI.md). The CLI speaks the same HTTP API as the UI and
 ```
 apps/
   desktop/   React 19 + Vite + Tauri 2 (HashRouter for tauri:// and http://)
-  daemon/    Fastify 5: 50 routes, SSE, static hosting, scheduler, secret vault
+  daemon/    Fastify 5: 55 routes, SSE, static hosting, scheduler, secret vault
   cloud/     Cloud control plane (pairing / tunnel / quota / billing, in-memory)
   cli/       cs command sharing the public API
 packages/
   protocol/       entity schemas, invariants, Agent Link frames, artifact contracts + coercion
   tools/          path sandbox (realpath, symlink-safe), grant evaluation, approval gate, audit, injection fence
   model-gateway/  OpenAI / Anthropic adapters, SSE parser, budget precheck, backoff, redaction
-  store-sqlite/   6 migrations, 15 tables, repositories
+  store-sqlite/   7 migrations, 16 tables, repositories
   agent-core/     agent loop, tool feedback, approval pause/resume, transcript persistence
 ```
 
