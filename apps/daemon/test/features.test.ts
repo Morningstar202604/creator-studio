@@ -277,15 +277,14 @@ describe('R2 script, shot list and review generation', () => {
     expect(result.body.artifact.kind).toBe('shot-list');
   });
 
-  it('generates a review report that cites the metrics context', async () => {
+  it('refuses review-report on /generate and points at the review endpoint', async () => {
     const id = await createProject('复盘生成');
-    upstream.script([{ text: validReview }]);
     const result = await api(`/v1/projects/${id}/generate`, {
       method: 'POST',
       body: JSON.stringify({ kind: 'review-report', context: '播放 1000，点赞 50' }),
     });
-    expect(result.status).toBe(201);
-    expect(result.body.artifact.kind).toBe('review-report');
+    expect(result.status).toBe(400);
+    expect(result.body.error.code).toBe('USE_REVIEW_ENDPOINT');
   });
 
   it('rejects an out-of-contract script payload without writing a file', async () => {
@@ -435,6 +434,40 @@ describe('R5 automations', () => {
     expect((await api(`/v1/automations/${automationId}`, { method: 'DELETE' })).status).toBe(204);
   });
 
+  // Regression: the scheduler ticks every 30s and "run now" exists beside it. Two
+  // calls for the same automation used to start two generations — two model calls,
+  // two artifacts, two run rows — because nothing tracked what was in flight. The
+  // second caller must join the run already going, not start a competing one.
+  it('does not start a second run while one is already in flight', async () => {
+    const id = await createProject('并发自动化');
+    const created = await api('/v1/automations', {
+      method: 'POST',
+      body: JSON.stringify({
+        projectId: id,
+        name: '并发',
+        kind: 'topic-card',
+        prompt: '并发',
+        intervalMinutes: 60,
+      }),
+    });
+    const automationId = created.body.automation.id as string;
+
+    upstream.script([{ text: validTopic }, { text: validTopic }]);
+    const [first, second] = await Promise.all([
+      api(`/v1/automations/${automationId}/run`, { method: 'POST' }),
+      api(`/v1/automations/${automationId}/run`, { method: 'POST' }),
+    ]);
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    // Same artifact id on both responses: they observed one execution.
+    expect(first.body.artifactId).toBe(second.body.artifactId);
+
+    const list = await api('/v1/automations');
+    const automation = list.body.automations.find((entry: { id: string }) => entry.id === automationId);
+    expect(automation.recentRuns).toHaveLength(1);
+  });
+
   it('rejects an unknown project and an out-of-range interval', async () => {
     const missing = await api('/v1/automations', {
       method: 'POST',
@@ -473,6 +506,35 @@ describe('R6 metrics and library', () => {
     expect(summary.likes).toBe(180);
 
     expect((await api(`/v1/metrics/${first.body.metrics.id}`, { method: 'DELETE' })).status).toBe(204);
+  });
+
+  // Regression: the route used to read known keys one at a time and treat
+  // anything else as absent, so a client sending `completionRate` instead of
+  // `retentionPercent` got a 201 and a silently zeroed metric. A wrong field name
+  // must be reported, not swallowed.
+  it('rejects an unknown metric field instead of silently dropping it', async () => {
+    const id = await createProject('指标字段');
+    const rejected = await api(`/v1/projects/${id}/metrics`, {
+      method: 'POST',
+      body: JSON.stringify({ views: 100, likes: 10, comments: 1, completionRate: 0.42 }),
+    });
+    expect(rejected.status).toBe(400);
+    expect(rejected.body.error.code).toBe('INVALID_INPUT');
+    expect(String(rejected.body.error.message)).toContain('completionRate');
+
+    const list = await api(`/v1/projects/${id}/metrics`);
+    expect(list.body.metrics).toHaveLength(0);
+  });
+
+  it('rejects a retention value outside 0-100', async () => {
+    const id = await createProject('指标范围');
+    // The contract is a percentage: 0-100. 140 is out of range and must be
+    // rejected rather than clamped, so a typo cannot become a silent "100%".
+    const rejected = await api(`/v1/projects/${id}/metrics`, {
+      method: 'POST',
+      body: JSON.stringify({ views: 100, likes: 10, comments: 1, retentionPercent: 140 }),
+    });
+    expect(rejected.status).toBe(400);
   });
 
   it('lists artifacts across projects with their project titles', async () => {

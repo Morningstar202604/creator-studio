@@ -12,6 +12,29 @@ vi.mock('../src/api', async () => {
       health: vi.fn(async () => ({ ok: true, version: 1, workspaceRoot: 'C:/ws', os: 'win32', pid: 1 })),
       tools: vi.fn(async () => ({ tools: [] })),
       listProjects: vi.fn(async () => ({ projects: [] })),
+      scenarios: vi.fn(async () => ({
+        scenarios: [
+          {
+            id: 'video',
+            name: '中长视频',
+            description: '',
+            icon: '',
+            builtin: true,
+            defaultPlatform: 'bilibili',
+            stages: [
+              { key: 'topic', label: '选题', hint: '', produces: ['topic-card'], promptHint: '', required: true },
+              { key: 'research', label: '资料', hint: '', produces: ['research-notes'], promptHint: '', required: true },
+              { key: 'script', label: '脚本', hint: '', produces: ['script'], promptHint: '', required: true },
+              { key: 'shotlist', label: '分镜', hint: '', produces: ['shot-list'], promptHint: '', required: false },
+              { key: 'package', label: '包装', hint: '', produces: ['publish-pack'], promptHint: '', required: true },
+              { key: 'published', label: '发布', hint: '', produces: [], promptHint: '', required: false },
+              { key: 'review', label: '复盘', hint: '', produces: ['review-report'], promptHint: '', required: false },
+            ],
+            entityTypes: [],
+          },
+        ],
+        defaultId: 'video',
+      })),
       getProject: vi.fn(),
       createProject: vi.fn(async () => ({
         project: {
@@ -98,7 +121,8 @@ describe('R4 create project', () => {
     await user.click(screen.getByRole('button', { name: '新建项目' }));
 
     await waitFor(() => {
-      expect(mocked.createProject).toHaveBeenCalledWith('测试项目', 'bilibili');
+      // The scenario id is now part of the call so the pack decides the stages.
+      expect(mocked.createProject).toHaveBeenCalledWith('测试项目', 'bilibili', 'video');
     });
     expect(mocked.listProjects.mock.calls.length).toBeGreaterThanOrEqual(2);
   });

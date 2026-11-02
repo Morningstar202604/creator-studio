@@ -9,6 +9,8 @@ export type MemoryKind =
   | 'shot-list'
   | 'publish-pack'
   | 'review-report'
+  | 'outline'
+  | 'chapter'
   | 'fact'
   | 'decision'
   | 'preference'

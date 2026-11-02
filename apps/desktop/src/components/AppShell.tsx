@@ -128,8 +128,10 @@ export function TopBar({ title }: { title: ReactNode }): React.ReactElement {
                   : `${model.baseUrl} · ${model.model}`
               }
             >
-              {model.name}
-              {model.keyConfigured === false ? '（缺密钥）' : ''}
+              <span className="chip-label">
+                {model.name}
+                {model.keyConfigured === false ? '（缺密钥）' : ''}
+              </span>
             </NavLink>
           )}
           <NavLink to="/approvals" className={({ isActive }) => `chip approval-chip${isActive ? ' active' : ''}`}>
@@ -172,18 +174,23 @@ function CommandPalette({ onClose }: { onClose: () => void }): React.ReactElemen
 
   useEffect(() => {
     inputRef.current?.focus();
-    void api
-      .listProjects()
-      .then((result) =>
+    // Stage keys are internal (`premise`, `shots`); the palette shows the label the
+    // pack gives them, and falls back to the key only when the pack is unavailable.
+    void Promise.all([api.listProjects(), api.scenarios().catch(() => ({ scenarios: [] }))])
+      .then(([result, scenarioResult]) => {
+        const labels = new Map<string, string>();
+        for (const pack of scenarioResult.scenarios) {
+          for (const stage of pack.stages) labels.set(`${pack.id}:${stage.key}`, stage.label);
+        }
         setProjectItems(
           result.projects.slice(0, 20).map((project) => ({
             id: project.id,
             label: project.title,
-            hint: `项目 · ${project.stage}`,
+            hint: `项目 · ${labels.get(`${project.scenarioId}:${project.stage}`) ?? project.stage}`,
             to: `/p/${project.id}`,
           })),
-        ),
-      )
+        );
+      })
       .catch(() => setProjectItems([]));
   }, []);
 
@@ -311,6 +318,15 @@ export function AppShell({ title, children }: { title: ReactNode; children: Reac
       </div>
     </>
   );
+}
+
+/**
+ * Overlay layer that sits outside `.shell`. `.shell` has `overflow: hidden` so a
+ * `position: fixed` child would be clipped and offset by the shell's own box; the
+ * dialogs and toasts render here instead.
+ */
+export function OverlayLayer({ children }: { children: ReactNode }): React.ReactElement {
+  return <div className="overlay-layer">{children}</div>;
 }
 
 export function EmptyState({

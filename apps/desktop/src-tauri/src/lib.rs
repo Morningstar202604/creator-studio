@@ -88,6 +88,9 @@ fn daemon_status() -> serde_json::Value {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Desktop updates are signed with the repo release key; the public half is
+        // in tauri.conf.json under plugins.updater.pubkey.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(DaemonProcess(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![daemon_status])
         .setup(|app| {

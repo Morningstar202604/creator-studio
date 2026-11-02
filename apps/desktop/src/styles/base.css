@@ -199,12 +199,19 @@ a:hover {
   background: var(--warn);
 }
 
+/* The model name is user-supplied and can be long; the chip stays a pill while the
+   label ellipsises inside it. Clipping the whole chip cut the "（缺密钥）" suffix
+   mid-character, which is exactly the part that needs to stay readable. */
 .model-chip {
-  max-width: 160px;
+  max-width: 190px;
+  min-width: 0;
+}
+
+.model-chip .chip-label {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  display: inline-block;
-  line-height: 26px;
+  white-space: nowrap;
 }
 
 .ghost-chip {
@@ -544,6 +551,21 @@ a:hover {
   font-weight: 500;
 }
 
+/* Six built-in packs can contribute ~20 stage chips; wrapping them into three
+   rows pushed the project grid down and made the toolbar look like a table. One
+   horizontally scrollable row keeps the toolbar a single line. */
+.segmented.chip-scroll {
+  flex: 1 1 320px;
+  min-width: 0;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.segmented.chip-scroll button {
+  flex: none;
+}
+
 .badge {
   display: inline-flex;
   align-items: center;
@@ -792,7 +814,9 @@ a:hover {
 .project-progress {
   height: 4px;
   border-radius: 999px;
-  background: var(--track);
+  /* --track is nearly the card colour in dark mode, so an empty progress bar
+     vanished. --border stays visible on both themes. */
+  background: var(--border);
   overflow: hidden;
   margin-top: 2px;
 }
@@ -1674,6 +1698,22 @@ a:hover {
   background: var(--danger);
 }
 
+.kind-subtitle {
+  background: var(--subtle);
+}
+
+.kind-review-report {
+  background: var(--warn);
+}
+
+.kind-outline {
+  background: var(--info);
+}
+
+.kind-chapter {
+  background: var(--ok);
+}
+
 .library-path {
   flex: 1;
   min-width: 0;
@@ -1982,4 +2022,1040 @@ a:hover {
   margin-top: 10px;
   border-top: 1px solid var(--border);
   padding-top: 10px;
+}
+
+/* ------------------------------------------------------------ entity cards */
+
+.entity-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+}
+
+.entity-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 18px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.entity-card-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.entity-card-head h3 {
+  margin: 0;
+  font-size: 15px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.entity-icon {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.entity-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.entity-fields div {
+  display: flex;
+  gap: 4px;
+}
+
+.entity-fields dt {
+  color: var(--muted);
+}
+
+.entity-fields dd {
+  margin: 0;
+  color: var(--fg);
+}
+
+.entity-body {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+/* ---------------------------------------------------------------- overlays */
+
+.drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: color-mix(in srgb, var(--fg) 28%, transparent);
+  display: flex;
+  justify-content: flex-end;
+  align-items: stretch;
+}
+
+.drawer {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  box-shadow: -12px 0 40px color-mix(in srgb, var(--fg) 12%, transparent);
+  max-height: 100vh;
+}
+
+.drawer-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.drawer-head h2 {
+  margin: 0;
+  font-size: 16px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.drawer-body {
+  padding: 18px 20px;
+  overflow-y: auto;
+  display: grid;
+  gap: 12px;
+}
+
+.drawer-foot {
+  padding: 14px 20px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  background: var(--sunken);
+}
+
+.confirm {
+  margin: auto;
+  width: min(420px, 90vw);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px 22px;
+  display: grid;
+  gap: 12px;
+}
+
+.confirm h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.confirm p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--muted);
+}
+
+.toast-stack {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  left: auto;
+  top: auto;
+  z-index: 70;
+  display: grid;
+  gap: 8px;
+  max-width: min(360px, 80vw);
+  /* Anchored to the viewport even if a host page sets a transform on body. */
+  transform: none;
+  margin: 0;
+}
+
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px 10px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--raised);
+  color: var(--fg);
+  font-size: 13px;
+  box-shadow: 0 6px 20px color-mix(in srgb, var(--fg) 12%, transparent);
+}
+
+.toast.ok {
+  border-left: 3px solid var(--ok);
+}
+
+.toast.error {
+  border-left: 3px solid var(--danger);
+}
+
+.toast.info {
+  border-left: 3px solid var(--info);
+}
+
+.toast span {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.entity-links {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+}
+
+.entity-links li {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.entity-links .link-label {
+  color: var(--muted);
+}
+
+@media (max-width: 900px) {
+  .drawer {
+    width: 100vw !important;
+  }
+}
+
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.field-grid label {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+  min-width: 0;
+}
+
+.field-grid .span-2 {
+  grid-column: span 2;
+}
+
+.field-grid .input {
+  width: 100%;
+}
+
+@media (max-width: 640px) {
+  .field-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .field-grid .span-2 {
+    grid-column: span 1;
+  }
+}
+
+/* ------------------------------------------------------------------ kanban */
+
+.kanban {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(220px, 1fr);
+  gap: 12px;
+  align-items: start;
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+
+.kanban-column {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  background: var(--sunken);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  min-height: 120px;
+}
+
+.kanban-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.kanban-card {
+  display: grid;
+  gap: 3px;
+  text-align: left;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.kanban-card:hover {
+  border-color: var(--border-strong);
+}
+
+.kanban-card span:first-child {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.kanban-column > .hint {
+  font-size: 12px;
+  color: var(--subtle);
+}
+
+.relation-block {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--sunken);
+}
+
+.relation-block summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  list-style: none;
+}
+
+.relation-block summary::-webkit-details-marker {
+  display: none;
+}
+
+.relation-block[open] summary {
+  margin-bottom: 8px;
+}
+
+@media (min-width: 900px) {
+  .drawer .field-grid {
+    gap: 10px 14px;
+  }
+  .drawer .drawer-body {
+    padding: 16px 22px 24px;
+  }
+}
+
+.graph-canvas {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+/* ------------------------------------------------------------ relation graph */
+
+.graph-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 14px;
+  align-items: start;
+}
+
+.graph-canvas-wrap {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* Horizontally scrollable stage for wide diagrams (timelines, large graphs). */
+.graph-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-radius: 10px;
+}
+
+.graph-canvas {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.graph-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.legend-item i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.graph-side {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.graph-help {
+  margin: 0;
+  padding-left: 16px;
+  display: grid;
+  gap: 5px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+@media (max-width: 1100px) {
+  .graph-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.timeline-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 14px;
+  align-items: start;
+}
+
+.timeline-side {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.thread-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.thread-list li {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--sunken);
+}
+
+.thread-title {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+@media (max-width: 1100px) {
+  .timeline-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.timeline-scrub {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.scrub-dot {
+  min-width: 26px;
+  height: 24px;
+  padding: 0 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.scrub-dot:hover {
+  border-color: var(--border-strong);
+  color: var(--fg);
+}
+
+/* Never draw outside the canvas: a node that fits the layout but not the scroll
+   viewport looked cut in half before this. */
+.graph-scroll > .graph-canvas {
+  display: block;
+}
+
+/* ------------------------------------------------------------- writing desk */
+
+.desk {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr) 210px;
+  gap: 16px;
+  align-items: start;
+}
+
+.desk-rail {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  position: sticky;
+  top: 12px;
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+}
+
+.desk-rail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.desk-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.desk-item {
+  width: 100%;
+  display: grid;
+  gap: 2px;
+  text-align: left;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.desk-item:hover {
+  background: var(--hover);
+}
+
+.desk-item.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.desk-item-title {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  font-size: 13px;
+  line-height: 1.45;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.desk-item-num {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--subtle);
+}
+
+.desk-doc {
+  display: grid;
+  gap: 10px;
+  padding: 18px 22px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  min-height: 620px;
+}
+
+.desk-title-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.desk-title-row h2 {
+  margin: 0;
+  font-size: 20px;
+  letter-spacing: -0.01em;
+}
+
+.desk-status {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--subtle);
+}
+
+.desk-status.dirty {
+  color: var(--warn);
+}
+
+.desk-status.error {
+  color: var(--danger);
+}
+
+.desk-status.saving {
+  color: var(--accent);
+}
+
+.desk-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 12px;
+  color: var(--muted);
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.desk-editor {
+  width: 100%;
+  min-height: 480px;
+  resize: vertical;
+  border: 0;
+  background: transparent;
+  padding: 8px 0;
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.9;
+  color: var(--fg);
+}
+
+.desk-editor:focus {
+  outline: none;
+}
+
+.desk-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.desk-side {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  position: sticky;
+  top: 12px;
+}
+
+.desk-stats {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.desk-stats div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.desk-stats dt {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.desk-stats dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+@media (max-width: 1180px) {
+  .desk {
+    grid-template-columns: 200px minmax(0, 1fr);
+  }
+
+  .desk-side {
+    display: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .desk {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .desk-rail {
+    position: static;
+    max-height: 260px;
+  }
+}
+
+/* --------------------------------------------------------- kanban drag bits */
+
+.kanban-column.over {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.kanban-card {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  padding: 8px 10px;
+}
+
+.kanban-card.is-dragging {
+  opacity: 0.45;
+}
+
+.kanban-card.dragging {
+  box-shadow: var(--shadow-3);
+  cursor: grabbing;
+}
+
+.kanban-grip {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: var(--subtle);
+  cursor: grab;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 0 2px;
+  touch-action: none;
+}
+
+.kanban-grip:active {
+  cursor: grabbing;
+}
+
+.kanban-open {
+  flex: 1 1 auto;
+  display: grid;
+  gap: 3px;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+
+.kanban-open span:first-child {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* --------------------------------------------------- writing desk visualisation */
+
+.ring-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ring {
+  width: 84px;
+  height: 84px;
+  flex: none;
+}
+
+.ring-track {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 8;
+}
+
+.ring-value {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 8;
+  stroke-linecap: round;
+  transition: stroke-dasharray 240ms ease;
+}
+
+.ring-text {
+  fill: var(--fg);
+  font-size: 16px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.ring-legend {
+  display: grid;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ring-legend b {
+  color: var(--fg);
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+}
+
+.book-progress {
+  display: grid;
+  gap: 5px;
+}
+
+.book-progress-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.book-progress-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.book-progress-track i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+  transition: width 240ms ease;
+}
+
+.book-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 62px;
+}
+
+.book-bars-head {
+  display: none;
+}
+
+.book-bar {
+  flex: 1 1 0;
+  min-width: 5px;
+  border: 0;
+  border-radius: 3px 3px 2px 2px;
+  background: var(--border-strong);
+  cursor: pointer;
+  padding: 0;
+  transition: height 200ms ease, filter 120ms ease;
+}
+
+.book-bar:hover {
+  filter: brightness(1.15);
+}
+
+.book-bar.tone-todo {
+  background: var(--border-strong);
+}
+
+.book-bar.tone-doing {
+  background: var(--warn);
+}
+
+.book-bar.tone-done {
+  background: var(--ok);
+}
+
+.book-bar.tone-other,
+.book-bar.tone-empty {
+  background: var(--border);
+}
+
+.book-bar.active {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.book-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 4px;
+  background: var(--border-strong);
+}
+
+.dot.tone-doing {
+  background: var(--warn);
+}
+
+.dot.tone-done {
+  background: var(--ok);
+}
+
+.dot.tone-todo {
+  background: var(--border-strong);
+}
+
+.dot.tone-other,
+.dot.tone-empty {
+  background: var(--border);
+}
+
+.desk-item-bar {
+  display: block;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  margin-top: 3px;
+  overflow: hidden;
+}
+
+.desk-item-bar i {
+  display: block;
+  height: 100%;
+  min-width: 3px;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 200ms ease;
+}
+
+/* ------------------------------------------------------------ graph controls */
+
+.graph-viewport {
+  position: relative;
+}
+
+.graph-controls {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  display: grid;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-1);
+}
+
+.graph-ctl {
+  width: 28px;
+  height: 26px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.graph-ctl:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+.graph-ctl:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* --------------------------------------------------------------- thread bars */
+
+.thread-list li {
+  display: grid;
+  gap: 4px;
+}
+
+.thread-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.thread-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--warn);
+}
+
+.status-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--border-strong);
+  margin-right: 2px;
+}
+
+.status-dot.tone-todo {
+  background: var(--border-strong);
+}
+
+.status-dot.tone-doing {
+  background: var(--warn);
+}
+
+.status-dot.tone-done {
+  background: var(--ok);
+}
+
+.status-dot.tone-other,
+.status-dot.tone-empty {
+  background: var(--border);
+}
+
+.book-bars-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.thread-bar.unknown {
+  background: repeating-linear-gradient(
+    90deg,
+    var(--border) 0 4px,
+    transparent 4px 8px
+  );
 }

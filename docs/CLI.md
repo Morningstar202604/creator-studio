@@ -27,11 +27,16 @@ node apps/cli/dist/main.js <command> [args] [--flags]
 | `restore <projectId>` | 恢复软删除 |
 | `artifacts <projectId>` | 产物列表 |
 | `cat <artifactId>` | 打印产物正文 |
-| `gen <projectId> <kind> <context>` | 生成一类产物 |
+| `gen <projectId> <kind> <context>` | 生成一类内容产物（不含复盘报告） |
 | `run <projectId> <agent> <message>` | 派活给 Agent 并同步执行 |
 | `runs [--status failed]` | 最近运行 |
 | `checklist <projectId>` | 检查表；未通过时退出码 1 |
-| `publish <projectId>` | 导出发布包，打印绝对路径与文件数 |
+| `publish <projectId>` | 导出发布包（默认每类最新版），打印绝对路径与文件数；导出后项目进入发布阶段 |
+| `subtitle <projectId> [artifactId]` | 导出 SRT 字幕；省略 artifactId 时用最新脚本 |
+| `publish <projectId> [--history]` | 加 `--history` 让 zip 含全部历史版本 |
+| `review <projectId>` | 用已回填指标生成复盘报告并推进到复盘阶段 |
+| `styles` | 列出风格档案 |
+| `style-new <name> [--tone "..."] [--audience "..."] [--banned "词1,词2"]` | 新建风格档案 |
 | `usage` | 用量与花费 |
 | `pipeline <projectId> <context>` | 依次跑选题→资料→脚本→分镜→包装 |
 | `version` | 打印 CLI 版本 |
@@ -39,7 +44,7 @@ node apps/cli/dist/main.js <command> [args] [--flags]
 记忆检索与嵌入设置目前只有 HTTP 接口（`/v1/memory/*`、`/v1/settings/embedding`）与界面入口，CLI 未封装。
 
 `agent` 取值：`producer`｜`scout`｜`researcher`｜`scriptwriter`｜`director`｜`editor`｜`packager`｜`critic`。
-`kind` 取值：`topic-card`｜`research-notes`｜`script`｜`shot-list`｜`publish-pack`｜`review-report`。
+`kind` 取值：`topic-card`｜`research-notes`｜`script`｜`shot-list`｜`publish-pack`。复盘报告只能走 `POST /v1/projects/:id/review`（带指标与阶段推进），`/generate` 收到 `review-report` 返回 400 `USE_REVIEW_ENDPOINT`。
 
 ## 示例：一次完整的脚本化产出
 

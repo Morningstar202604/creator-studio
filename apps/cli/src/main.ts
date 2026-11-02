@@ -18,12 +18,16 @@ const HELP = `稿台 CLI — 对本地 daemon 的脚本化入口
   cs artifacts <projectId>           列出产物
   cs cat <artifactId>                打印产物内容
   cs gen <projectId> <kind> <context>
-                                     kind: topic-card|research-notes|script|shot-list|publish-pack|review-report
+                                     kind: topic-card|research-notes|script|shot-list|publish-pack（复盘用 cs review）
   cs run <projectId> <agent> <message>
                                      agent: producer|scout|researcher|scriptwriter|director|editor|packager|critic
   cs runs [--status failed]          最近运行
   cs checklist <projectId>           发布检查表
-  cs publish <projectId>             导出发布包 zip
+  cs publish <projectId> [--history] 导出发布包 zip（默认只含每类最新版）
+  cs subtitle <projectId> [artifactId] 导出 SRT 字幕
+  cs review <projectId>              用已回填数据生成复盘报告
+  cs styles                          列出风格档案
+  cs style-new <name> [--tone "..."] [--audience "..."] [--banned "词1,词2"]
   cs usage                           用量与花费
   cs pipeline <projectId> <context>  一键跑选题→资料→脚本→分镜→包装
 
@@ -185,8 +189,45 @@ async function main(): Promise<number> {
       return result.ready ? 0 : 1;
     }
     case 'publish': {
-      const result = await client.publish(requireArg(args, 0, 'projectId'));
+      const result = await client.publish(requireArg(args, 0, 'projectId'), {
+        includeHistory: flags['history'] !== undefined,
+      });
       line(`${result.absolutePath ?? result.file}  ${result.bytes} bytes  ${result.entries.length} files`);
+      if (result.stage !== undefined) line(`阶段：${result.stage}`);
+      return 0;
+    }
+    case 'subtitle': {
+      const result = await client.subtitle(requireArg(args, 0, 'projectId'), args[1]);
+      line(`已导出 ${result.cues} 条字幕 → ${result.artifact.path}`);
+      return 0;
+    }
+    case 'review': {
+      const result = await client.review(requireArg(args, 0, 'projectId'));
+      line(`复盘报告已生成 → ${result.artifact.path}`);
+      return 0;
+    }
+    case 'styles': {
+      const result = await client.styles();
+      if (result.styles.length === 0) {
+        line('还没有风格档案。用 cs style-new <name> --tone "..." --banned "词1,词2" 新建。');
+        return 0;
+      }
+      for (const style of result.styles) {
+        line(`${style.id.slice(0, 8)}  ${style.name}  禁用词 ${style.bannedWords.length}`);
+      }
+      return 0;
+    }
+    case 'style-new': {
+      const name = requireArg(args, 0, 'name');
+      const banned =
+        typeof flags['banned'] === 'string' ? flags['banned'].split(/[,，、]/).filter((word) => word !== '') : [];
+      const created = await client.saveStyle({
+        name,
+        ...(flags['tone'] === undefined ? {} : { tone: String(flags['tone']) }),
+        ...(flags['audience'] === undefined ? {} : { audience: String(flags['audience']) }),
+        ...(banned.length === 0 ? {} : { bannedWords: banned }),
+      });
+      line(`${created.style.id}  ${created.style.name}`);
       return 0;
     }
     case 'usage': {

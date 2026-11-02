@@ -1,52 +1,70 @@
-# Creator Studio (稿台)
+# Creator Studio
 
-**A local-first AI production desk for solo creators.**
-One supervised, resumable, auditable pipeline: topic → research → script → shot list → packaging → publish pack → review. Your footage never leaves your machine, and you can swap the model provider at any time.
+**A local-first production desk for people who ship creative work alone.**
 
-[Quick start](#quick-start) · [Screens](#screens) · [Features](#features) · [CLI](#cli) · [Architecture](#architecture) · [中文](README.md)
+Video, novels, podcasts, courses, long-form writing — each is a project with a
+defined pipeline, versioned artifacts, and a checklist that has to go green before
+anything is exported. Models run wherever you point them: a local endpoint or a
+remote API. Your files never leave the machine unless you configure a remote model.
+
+[Quick start](#quick-start) · [Screens](#screens) · [What it does](#what-it-does) · [Architecture](#architecture) · [Verification](#verification) · [中文](README.md)
 
 ![Project list](docs/screenshots/01-projects-light.png)
 
-## The problem
+---
 
-A creator's toolchain is fragmented: trends from a leaderboard, research across thirty tabs, the script in a document,
-the title and cover in another window, and the post-mortem from memory. General chat assistants cannot help — they have
-no project context, cannot touch your files, and you re-explain everything from scratch each time.
+## The problem it removes
 
-Creator Studio treats one video as a **project** and drives it with an agent pipeline that actually reads and writes files,
-calls tools, and spends within a budget — stopping at every decision that matters. It never publishes for you and never
-deletes your footage on its own.
+The work is one thing; the tools are fifteen. A topic comes from a leaderboard, the
+research lives in thirty tabs, the script sits in a document, the cover and title
+are made somewhere else, and the post-mortem is a guess.
+
+Creator Studio makes the project the unit. A project knows which stage it is in,
+which artifacts exist, what is missing, and what has already been approved. A model
+can draft each stage; you decide when a stage is done. Export is local — nothing is
+uploaded to a platform on your behalf.
+
+---
 
 ## Screens
 
-| Workspace: stages, artifacts, checklist, dispatch | Script: edit, rewrite, diff |
+| Workspace: stages, artifacts, checklist | Script: write and rewrite in place |
 |---|---|
 | ![Workspace](docs/screenshots/02-workspace-light.png) | ![Script](docs/screenshots/05-script-light.png) |
 
-| Topics: three scored cards | Review: trend and retention |
+| Topics: scored candidates | Review: trends and retention |
 |---|---|
 | ![Topics](docs/screenshots/03-topic-light.png) | ![Review](docs/screenshots/09-review-light.png) |
 
-| Publish: checklist and one-click export | Dark theme |
+| Publish: checklist gated export | Dark theme |
 |---|---|
 | ![Publish](docs/screenshots/08-publish-light.png) | ![Dark](docs/screenshots/15-projects-dark.png) |
 
-More in [`docs/screenshots/`](docs/screenshots/) (32 shots, including 1100/900 px responsive layouts, the command palette, memory search and dark theme).
-Demo recording: [`docs/media/demo.mp4`](docs/media/demo.mp4) · [`docs/media/demo.gif`](docs/media/demo.gif).
+Seventy-five screenshots live in [`docs/screenshots/`](docs/screenshots/): every page
+in light and dark, 1440 / 1100 / 900 px widths, the command palette, memory search,
+scenario packs, the relation graph, the narrative timeline and the writing desk.
+Demo recording: [`docs/media/demo.mp4`](docs/media/demo.mp4).
+
+---
 
 ## Quick start
+
+Three ways to run it. Pick one.
 
 ### 1. Desktop app
 
 ```bash
 pnpm install
 pnpm -r build
+node scripts/install-daemon-deps.mjs
 cd apps/desktop && pnpm tauri build
 ```
 
-Output: `apps/desktop/src-tauri/target/release/bundle/nsis/CreatorStudio_0.2.0_x64-setup.exe` (11.9 MB, bundles the daemon runtime).
+Output lands in `apps/desktop/src-tauri/target/release/bundle/`. The installer
+bundles the daemon files but still expects Node.js ≥ 22 on `PATH` to start it.
+Building requires Rust.
 
-### 2. Browser + local daemon
+### 2. Browser plus a local daemon — best for development
 
 ```bash
 pnpm install && pnpm -r build
@@ -54,21 +72,23 @@ pnpm --filter @creator-studio/daemon start -- --port 7878
 # open http://127.0.0.1:7878/
 ```
 
-The daemon serves the built UI itself — no separate frontend server, no CORS setup.
+The daemon serves the built UI itself. No separate front-end server, no CORS
+configuration.
 
-### 3. API / CLI only
+### 3. API or CLI only
 
 ```bash
 node apps/daemon/dist/main.js --port 7878
 node apps/cli/dist/main.js health
 ```
 
-## Model configuration
+### Connect a model
 
-**Through the UI (recommended)**: Settings → Models → Base URL / model / API key → save → test connection.
-Secrets go to `<dataDir>/secrets.json` (mode 0600) and never into SQLite, logs, or the event stream.
+In the app: **Settings → Models** → base URL, model name, API key → save → test.
+Keys are written to `<dataDir>/secrets.json` with mode 0600 and never enter SQLite,
+logs or the event stream.
 
-**Through the environment (CI, quick trials)**:
+Or through the environment:
 
 ```bash
 export MODEL_BASE_URL="https://api.openai.com/v1"
@@ -77,102 +97,273 @@ export MODEL_NAME="gpt-4o-mini"
 node apps/daemon/dist/main.js --port 7878
 ```
 
-Any OpenAI-compatible endpoint works (OpenAI, DeepSeek, Qwen, Kimi, GLM, Ollama, vLLM…) plus the native Anthropic protocol.
+Both OpenAI-compatible endpoints and the native Anthropic protocol work. With a
+remote model, prompts and the relevant project context are sent to that provider;
+remote embeddings send the text being indexed. Check the provider's data policy
+before pointing it at unpublished work.
 
-## Features
+---
 
-| Feature | Detail |
+## What it does
+
+### Scenario packs: one engine, six creative jobs
+
+A pack is JSON. It declares stages, which of six views each stage renders, the card
+types with their fields, the relations between cards, and the checklist. The engine
+reads packs; it never executes them.
+
+| Pack | Stages | Cards |
+|---|---|---|
+| Video (mid-length) | topic · research · script · shot list · packaging · publish · review | — |
+| Novel | premise · world · outline · chapters · revision · submission | character · chapter · location · foreshadow |
+| Podcast | topic · research · outline · script · edit list · publish | guest · question |
+| Course | goals · research · outline · lessons · exercises · launch | lesson · exercise |
+| Writing | brief · material · draft · multi-platform · assets · publish | asset · persona |
+| Shorts | hook · script · shots · subtitles · publish | shot |
+
+Adding a scenario is a JSON file, not a code change. Fork a built-in pack, edit the
+stages, import it. An unknown view is rejected with the list of supported ones
+rather than failing at runtime.
+
+### The six views
+
+`generate` (artifact from a model) · `entities` (card board with optional kanban
+grouping) · `document` (single-column writing desk) · `publish` (checklist-gated
+export) · `review` (metrics and attribution) · `board` (drag-and-drop columns).
+
+### Writing desk
+
+A `document` stage becomes a chapter rail, a distraction-free editor, live word
+count, a per-chapter target ring, whole-book progress and a chapter-length strip.
+Autosave every 900 ms, per chapter, with chapter switching that never cross-writes.
+One click exports Word (`.docx`) and Markdown.
+
+### Narrative tools
+
+The relation graph renders every card as a network with typed edges and inverse
+labels; click a node to isolate its direct relations. The timeline lays chapters
+left to right by number and draws foreshadowing threads from plant to payoff,
+outlining unclosed threads in red with a list of what remains unpaid.
+
+### Pipeline guarantees
+
+| Concern | Behavior |
 |---|---|
-| Seven-stage pipeline | Topic / research / script / shot list / packaging / publish / review, each with its own page and version history |
-| Contract-checked artifacts | A zod contract per artifact; model output is repaired (numeric strings, scalar-to-list, nested wrappers) then validated, with one example-driven corrective retry |
-| Approval gates | Delete, write-outside-workspace and shell execution require a human decision; approvals are single-use and can resume the run |
-| Resumable runs | Every step's transcript is persisted; a crash marks in-flight runs `INTERRUPTED`; an approval resumes from where it stopped |
-| Budget and spend | Every generation is booked as a run; monthly and per-project ceilings; live spend in the top bar |
-| Tool permissions | `auto / ask / deny` per tool and path glob, deny > ask > auto, no grant means deny |
-| Audit trail | Every tool call records target, decision, duration and outcome via `GET /v1/audit` |
-| Publish pack | Export is gated on a green checklist; the zip contains all artifacts plus `README.md` and a `manifest.json` with per-file sha256 |
-| Automations | Interval-based regeneration per project (hourly … weekly), scheduler inside the daemon, plus "run now" |
-| Library | Cross-project artifact search, type filter, inline preview |
-| Memory | Every artifact is chunk-indexed and searched with hybrid FTS5 substring + vector ranking; relevant history is injected into generation. Offline hash embeddings by default, switchable to a provider's `/embeddings` |
-| Review | Manual views/likes/comments/retention/revenue entry with ECharts trends and period-over-period deltas |
-| Multi-tenancy | Cloud storage is scoped by `userId`: cross-tenant reads/writes are 404 and logged as security events; a run targeting a foreign device degrades to a cloud-only run |
-| Theming | Light / dark / system, all tokenized and contrast-checked |
-| Command palette | `Ctrl/Cmd + K` to jump to projects or pages; `Ctrl+Shift+A` for approvals |
+| Structured output | A zod contract per artifact. Model output is repaired first (numeric strings, scalar-to-list, nested wrappers), then validated, with one example-driven retry |
+| Approval | Deleting, writing outside the workspace and running shell commands require a human decision. Approvals are single-use and resume the run |
+| Recovery | Every step's transcript is persisted. A crash marks in-flight runs `INTERRUPTED`; an approval picks up where it stopped |
+| Tool permissions | `auto / ask / deny` per tool and path glob, deny wins over ask over auto, no grant means deny |
+| Audit | Every tool call records target, decision, duration and result; exportable via `GET /v1/audit` |
+| Budget | Usage and cost are recorded per run; agent runs support hard budget limits |
+| Provenance | Give reference URLs and the daemon fetches the real pages (private hosts, embedded credentials and non-http(s) schemes refused; robots and size limits enforced). Each fact is marked verifiable or not; unverified ones drop to low confidence, and the artifact ends with a fetch ledger and per-source sha256 |
+| Memory | Every artifact is chunked and indexed; retrieval blends FTS5 substring with vector ranking. Offline feature-hash embeddings by default, switchable to a provider's `/embeddings` |
+| Style | Reusable tone / audience / banned-word profiles, attached per project and injected into every generation. Banned-word hits appear in the checklist |
+
+### Export and review
+
+A publish pack is a ZIP built only when every required checklist item is green. It
+contains the latest version of each artifact, a `README.md`, and a `manifest.json`
+with a sha256 per file. Export advances the project to the published stage. Nothing
+is posted to any platform.
+
+Metrics are entered by hand (views, likes, comments, completion, revenue) and drawn
+as ECharts trends with period-over-period deltas. One click then asks the model for
+an attribution report, which becomes a versioned artifact and advances the project
+to review.
+
+### Everywhere
+
+Light / dark / system themes, every color a token and every token contrast-checked.
+`Ctrl/Cmd + K` command palette. Responsive down to 900 px. Subtitle export to SRT
+with estimated timing that must be calibrated against the recording — the app says
+so at the point of export.
+
+---
 
 ## CLI
 
 ```bash
 node apps/cli/dist/main.js health
-node apps/cli/dist/main.js new "Why AI is killing junior developers" --platform youtube --tag AI
+node apps/cli/dist/main.js new "Why AI is changing junior roles" --platform youtube --tag AI
 node apps/cli/dist/main.js pipeline <projectId> "AI and entry-level jobs"
 node apps/cli/dist/main.js publish <projectId>
 ```
 
-See [`docs/CLI.md`](docs/CLI.md). The CLI speaks the same HTTP API as the UI and can target a remote daemon via `--url`.
+Full command list in [`docs/CLI.md`](docs/CLI.md). The CLI uses the same HTTP API as
+the UI and can target a remote daemon with `--url`.
+
+---
 
 ## Architecture
 
 ```
 apps/
-  desktop/   React 19 + Vite + Tauri 2 (HashRouter for tauri:// and http://)
-  daemon/    Fastify 5: 55 routes, SSE, static hosting, scheduler, secret vault
-  cloud/     Cloud control plane (pairing / tunnel / quota / billing, in-memory)
-  cli/       cs command sharing the public API
+  desktop/   React 19 + Vite + Tauri 2 (HashRouter, works over tauri:// and http://)
+  daemon/    Fastify 5 — 79 routes, SSE, static hosting, scheduler, secret vault
+  cloud/     control plane: pairing, tunnel, quota, billing
+  cli/       the `cs` command, same API as the UI
 packages/
-  protocol/       entity schemas, invariants, Agent Link frames, artifact contracts + coercion
-  tools/          path sandbox (realpath, symlink-safe), grant evaluation, approval gate, audit, injection fence
-  model-gateway/  OpenAI / Anthropic adapters, SSE parser, budget precheck, backoff, redaction
-  store-sqlite/   7 migrations, 16 tables, repositories
-  agent-core/     agent loop, tool feedback, approval pause/resume, transcript persistence
+  protocol/       entity schemas, invariants, artifact contracts, output coercion
+  tools/          path sandbox (realpath, symlink-safe), grants, approval gate, audit
+  model-gateway/  OpenAI and Anthropic adapters, SSE parsing, budget precheck, backoff, redaction
+  store-sqlite/   12 migrations, SQLite repositories
+  agent-core/     agent loop, tool feedback, approval pause/resume, transcripts
 ```
 
-Design details: [`ARCHITECTURE.md`](ARCHITECTURE.md). HTTP surface: [`docs/API.md`](docs/API.md).
+**Design rule:** the engine owns behavior, views are a closed set of six, packs are
+data. That is why a new creative job needs no new code, and why importing a pack
+from someone else cannot execute their code.
+
+Full design: [`ARCHITECTURE.md`](ARCHITECTURE.md). HTTP surface:
+[`docs/API.md`](docs/API.md). Decisions: [`docs/adr/`](docs/adr/).
+
+### Security defaults
+
+- The daemon binds `127.0.0.1` only. CORS allows loopback and the Tauri pseudo-origin.
+- Every file path goes through `resolveInsideWorkspace`, which rejects absolute
+  paths, `..` and symlink escapes.
+- Rendered Markdown is sanitized with DOMPurify. Model output is treated as
+  untrusted input.
+- API keys live in a 0600 secrets file, never in the database or the logs.
+- The cloud plane ships device pairing and tunnels with revocable, rotatable device
+  tokens; see "Known limits" for what is not yet proven end to end.
+
+---
 
 ## Verification
 
-Measured on this machine (Windows 11 / Node 24 / Rust 1.99):
-
-```
-pnpm -r test            9 packages, 421 passed
-pnpm -r build           all Done
-pnpm -r typecheck       all Done
-node scripts/security-audit.mjs   145 files, 5 checks PASS
-python scripts/check-contrast.py  all checks pass
-npx tauri build         CreatorStudio_0.2.0_x64-setup.exe (11.93 MiB)
-python scripts/shoot.py 25 screenshots (+7 demo shots, 32 total), 0 console errors, 0 horizontal overflow
-node scripts/smoke-e2e.mjs       real-model e2e: 5 stages + checklist + zip export
+```bash
+pnpm verify          # lint → build → typecheck → test → offline smoke → security → contrast → version agreement
+pnpm -r test         # 657 passed, 0 skipped
+pnpm test:postgres   # tenant isolation against a real database (opt-in)
 ```
 
-End-to-end against a real model (not a mock): a local OpenAI-compatible gateway with `glm-5.3-flash` and
-`deepseek-v4.1-flash` produced all six artifact stages, each passing schema validation; the publish pack came out at
-14.6 KB with six files and a verifiable `manifest.json`.
+UI changes additionally require a real browser:
 
-## Comparison
+```bash
+python scripts/shoot.py --base http://127.0.0.1:7878         # 26 pages, layout assertions
+python scripts/click-sweep.py --base http://127.0.0.1:7878   # every control, keyboard nav
+```
 
-Among open-source peers, Dify / n8n / langflow excel at general orchestration, OpenHands / cline at agent execution,
-MoneyPrinterTurbo at one-click video generation. Creator Studio's difference is a **project-shaped seven-stage pipeline
-with local-first defaults, approvals and budgets**. See [`docs/COMPETITIVE.md`](docs/COMPETITIVE.md) for the mechanism
-breakdown across 15 projects with real star/license data.
+What each layer proves, and what it cannot, is written down in
+[`docs/VERIFICATION.md`](docs/VERIFICATION.md). Current state, including what is
+**not** verified, is in [`docs/STATUS.md`](docs/STATUS.md). The short version:
+
+| Proven | Not proven |
+|---|---|
+| Unit, contract and store tests; offline model contract; security and contrast audits; browser layout and interaction sweeps; the full artifact pipeline against a local model stub | Live vendor accounts, macOS/Linux installers, the auto-update round trip, Postgres under load, the desktop→cloud execution chain, any human time-saving figure |
+
+No time-saving number is published anywhere in this repository, because none has
+been measured.
+
+---
+
+## How it differs
+
+Dify, n8n and langflow are general orchestration. OpenHands and cline are agent
+execution environments. MoneyPrinterTurbo is one-click video generation. Creator
+Studio is narrower: a project with a scenario-defined pipeline, local-first storage,
+approval-gated tools, and artifact contracts that make model output reproducible.
+
+A mechanism-by-mechanism comparison against fifteen projects, with the gaps left
+open, is in [`docs/COMPETITIVE.md`](docs/COMPETITIVE.md).
+
+---
+
+## Known limits
+
+Stated here so you find them before a deadline does.
+
+1. **Chapter autosave overwrites the whole body.** Two clients on one chapter will
+   overwrite each other; single-user is safe. §0.19 in the roadmap.
+2. **The writing desk is plain Markdown.** No comments, tracked changes or table of
+   contents; complex layout belongs in the exported Word file.
+3. **Default memory retrieval is lexical**, an n-gram feature hash plus substring
+   match, not a neural embedding model. True semantic retrieval requires a provider
+   that serves `/embeddings`, and the UI says so where you choose.
+4. **Subtitle timing is estimated** from punctuation and text length. It is not
+   aligned to audio; calibrate against the recording.
+5. **The cloud plane is not proven end to end.** Pairing, tunnels, quotas and
+   tenant isolation exist and the Postgres predicates are in SQL, but a
+   desktop→cloud task has never been executed.
+6. **Auto-update is wired but unproven.** Signing and the updater plugin are in
+   place; a real old→new upgrade has not been performed. Windows installers are not
+   code-signed, so SmartScreen will warn.
+7. **No timed study exists.** Any productivity claim you read elsewhere about this
+   kind of tool does not come from this project.
+
+---
 
 ## Development
 
 ```bash
 pnpm install
-pnpm -r test
-pnpm -r typecheck
-pnpm -r build
-python scripts/shoot.py --base http://127.0.0.1:7878
+pnpm verify            # the whole gate; this is what CI runs
+pnpm -r test           # 657 passed, 0 skipped
 ```
 
-- [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md) · [Changelog](CHANGELOG.md)
-- [Product notes](docs/PRODUCT-BRAINSTORM.md) · [UI spec](docs/UI-SPEC.md) · [Design system](docs/DESIGN-SYSTEM.md)
+Two harnesses make a full run reproducible without credentials:
 
-## Known limits
+```bash
+node scripts/stub-model.mjs 7996            # deterministic OpenAI-compatible stub
+node scripts/seed-demo.mjs http://127.0.0.1:7878   # presentable demo dataset
+```
 
-1. The cloud app is a single-process in-memory implementation — no Postgres/Redis yet. Multi-tenant isolation is enforced in the store with tests, but the same `WHERE user_id` predicates and RLS must be carried over when Postgres lands.
-2. No auto-update (no code-signing certificate); NSIS installers upgrade manually.
-3. Default memory search is **lexical vectors plus substring matching** — offline and free, not a neural semantic model. Real semantic search requires selecting an `/embeddings`-capable model in settings. The UI and the code both say so.
-4. The "8 hours to 2 hours" efficiency claim is a product hypothesis, not a measured result.
+- Contributing: [`CONTRIBUTING.md`](CONTRIBUTING.md)
+- Security policy: [`SECURITY.md`](SECURITY.md)
+- Code of conduct: [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)
+- Changelog: [`CHANGELOG.en.md`](CHANGELOG.en.md)
+- Release process: [`docs/RELEASING.md`](docs/RELEASING.md)
+- Architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md)
+- API reference: [`docs/API.md`](docs/API.md)
+- UI specification: [`docs/UI-SPEC.md`](docs/UI-SPEC.md) · Design system: [`docs/DESIGN-SYSTEM.md`](docs/DESIGN-SYSTEM.md)
+
+## Try it with a novel
+
+```bash
+# A novel project: stage order comes from the pack
+curl -s -X POST http://127.0.0.1:7878/v1/projects \
+  -H 'content-type: application/json' \
+  -d '{"title":"Harbor of Fog","scenarioId":"novel"}'
+```
+
+```bash
+# A character card. Fields are declared by the novel pack; a missing required
+# field is rejected. Select fields must use a declared option, so the value below
+# is the pack's own label for the protagonist role.
+curl -s -X POST http://127.0.0.1:7878/v1/projects/<projectId>/entities \
+  -H 'content-type: application/json' \
+  -d '{"type":"character","title":"Lin Yan","fields":{"name":"Lin Yan","role":"主角","goal":"Find out what happened to his father"}}'
+```
+
+In the UI: the scenario badge on the project card → the workspace shows that pack's
+stages → "open cards" goes to characters, chapters, locations and foreshadowing.
+
+## Writing your own scenario
+
+A pack is data. Declare stages, the view each one renders, card types with their
+fields, and the checklist:
+
+```json
+POST /v1/scenarios
+{
+  "id": "screenplay",
+  "name": "Screenplay",
+  "stages": [
+    { "key": "logline", "label": "Logline", "view": "generate", "produces": ["topic-card"], "required": true },
+    { "key": "scene",   "label": "Scenes",  "view": "entities", "entityType": "scene", "produces": ["chapter"], "required": true }
+  ],
+  "entityTypes": [
+    { "key": "scene", "label": "Scene", "titleField": "slug", "fields": [
+      { "key": "slug", "label": "Scene number", "type": "text", "required": true }
+    ]}
+  ]
+}
+```
+
+`inherits` lets a pack extend a built-in without repeating it: a child pack writes
+only its additions, same-key stages override, depth is capped at 4 and cycles are
+rejected.
 
 ## License
 

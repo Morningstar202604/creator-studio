@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import type React from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ApiError, api, apiExtra, type Project, type Run, type Step } from '../api';
+import { ApiError, api, apiExtra, type Project, type Run, type ScenarioPack, type Step, type StyleProfile } from '../api';
 import { AppShell, PageHead } from '../components/AppShell';
 import { MemoryPanel } from './MemoryPage';
 import { useRunStream } from '../features/useRunStream';
-import { STAGES, formatCny, relativeTime, stageLink, stageIndex } from '../lib/format';
+import { formatCny, relativeTime, stageHref, stageIndexIn } from '../lib/format';
 
-type ProjectStats = { artifacts: number; runs: number; tokens: number; costCny: number };
+type ProjectStats = { artifacts: number; cards?: number; runs: number; tokens: number; costCny: number };
 type ChecklistEntry = { key: string; label: string; ok: boolean; required?: boolean };
 
 export function WorkspacePage(): React.ReactElement {
@@ -16,15 +16,17 @@ export function WorkspacePage(): React.ReactElement {
   const [project, setProject] = useState<Project | null>(null);
   const [stats, setStats] = useState<ProjectStats | null>(null);
   const [checklist, setChecklist] = useState<ChecklistEntry[]>([]);
+  const [pack, setPack] = useState<ScenarioPack | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const result = await apiExtra.projectDetail(id);
+      const [result, scenarioResult] = await Promise.all([apiExtra.projectDetail(id), api.scenarios()]);
       setProject(result.project);
       setStats(result.stats);
       setChecklist(result.checklist);
+      setPack(scenarioResult.scenarios.find((candidate) => candidate.id === result.project.scenarioId) ?? null);
       setError(null);
     } catch {
       // Fall back to the stable per-resource routes; the aggregate route is newer.
@@ -67,9 +69,17 @@ export function WorkspacePage(): React.ReactElement {
     );
   }
 
-  const current = stageIndex(project.stage);
+  // Stages come from the project's scenario pack; the video list is only a fallback
+  // for a project whose pack was deleted.
+  const stages = pack?.stages ?? [];
+  const current = Math.max(0, stageIndexIn(stages, project.stage));
+  const currentStage = stages[current];
   const required = checklist.filter((item) => item.required !== false);
   const done = required.filter((item) => item.ok).length;
+  const cardsHref = pack !== null && pack.entityTypes.length > 0 ? `/p/${project.id}/cards/${pack.entityTypes[0]?.key ?? ''}` : null;
+  const writingStage = pack?.stages.find((stage) => stage.view === 'document' && stage.entityType !== undefined);
+  const writingHref =
+    writingStage?.entityType === undefined ? null : `/p/${project.id}/write/${writingStage.entityType}`;
 
   return (
     <AppShell
@@ -85,11 +95,13 @@ export function WorkspacePage(): React.ReactElement {
         title={project.title}
         subtitle={
           <>
-            {STAGES[current]?.label ?? project.stage} · {project.platform}
+            {currentStage?.label ?? project.stage} · {pack?.name ?? '视频'} · {project.platform}
             {stats !== null && (
               <>
                 {' · '}
-                {stats.artifacts} 个产物 · {stats.runs} 次运行 · {formatCny(stats.costCny)}
+                {stats.artifacts} 个产物
+                {stats.cards === undefined || stats.cards === 0 ? '' : ` · ${stats.cards} 张卡片`} · {stats.runs} 次运行 ·{' '}
+                {formatCny(stats.costCny)}
               </>
             )}
           </>
@@ -98,7 +110,28 @@ export function WorkspacePage(): React.ReactElement {
         <button className="btn" onClick={() => void load()}>
           刷新
         </button>
-        <button className="btn primary" onClick={() => navigate(stageLink(project.id, project.stage))}>
+        {cardsHref !== null && (
+          <>
+            {writingHref !== null && (
+              <button className="btn" onClick={() => navigate(writingHref)}>
+                写作台
+              </button>
+            )}
+            <button className="btn" onClick={() => navigate(cardsHref)}>
+              打开卡片
+            </button>
+            <button className="btn" onClick={() => navigate(`/p/${project.id}/graph`)}>
+              关系图
+            </button>
+            <button className="btn" onClick={() => navigate(`/p/${project.id}/timeline`)}>
+              时间轴
+            </button>
+          </>
+        )}
+        <button
+          className="btn primary"
+          onClick={() => navigate(currentStage === undefined ? `/p/${project.id}` : stageHref(project.id, currentStage))}
+        >
           继续当前阶段
         </button>
       </PageHead>
@@ -109,11 +142,11 @@ export function WorkspacePage(): React.ReactElement {
         <aside className="rail">
           <div className="rail-title">阶段</div>
           <ol className="stage-list">
-            {STAGES.map((stage, index) => (
+            {stages.map((stage, index) => (
               <li key={stage.key} className={index < current ? 'done' : index === current ? 'now' : ''}>
                 <button
                   className="stage-link"
-                  onClick={() => navigate(stageLink(project.id, stage.key))}
+                  onClick={() => navigate(stageHref(project.id, stage))}
                   aria-current={index === current ? 'step' : undefined}
                 >
                   {stage.label}
@@ -176,15 +209,39 @@ export function WorkspacePage(): React.ReactElement {
   );
 }
 
+export function loadStylesWithCleanup(
+  load: (signal?: AbortSignal) => Promise<{ styles: StyleProfile[] }>,
+  setStyles: (styles: StyleProfile[]) => void,
+): () => void {
+  let active = true;
+  const controller = new AbortController();
+  void load(controller.signal)
+    .then((result) => {
+      if (active) setStyles(result.styles);
+    })
+    .catch((cause: unknown) => {
+      const aborted = typeof cause === 'object' && cause !== null && 'name' in cause && cause.name === 'AbortError';
+      if (active && !aborted) setStyles([]);
+    });
+  return () => {
+    active = false;
+    controller.abort();
+  };
+}
+
 function ProjectSettings({ project, onSaved }: { project: Project; onSaved: () => Promise<void> }): React.ReactElement {
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState(project.title);
   const [description, setDescription] = useState(project.description ?? '');
   const [tags, setTags] = useState((project.tags ?? []).join(', '));
+  const [styleId, setStyleId] = useState(project.styleProfileId ?? '');
+  const [styles, setStyles] = useState<StyleProfile[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const navigate = useNavigate();
+
+  useEffect(() => loadStylesWithCleanup(apiExtra.styles, setStyles), []);
 
   const save = async (): Promise<void> => {
     setBusy(true);
@@ -197,6 +254,7 @@ function ProjectSettings({ project, onSaved }: { project: Project; onSaved: () =
           .map((tag) => tag.trim())
           .filter((tag) => tag !== '')
           .slice(0, 12),
+        styleProfileId: styleId === '' ? null : styleId,
       });
       await onSaved();
       setOpen(false);
@@ -247,6 +305,22 @@ function ProjectSettings({ project, onSaved }: { project: Project; onSaved: () =
       <label>
         标签（逗号分隔）
         <input className="input" value={tags} onChange={(event) => setTags(event.target.value)} />
+      </label>
+      <label>
+        风格档案
+        <select
+          className="input select"
+          aria-label="风格档案"
+          value={styleId}
+          onChange={(event) => setStyleId(event.target.value)}
+        >
+          <option value="">不挂载</option>
+          {styles.map((style) => (
+            <option key={style.id} value={style.id}>
+              {style.name}
+            </option>
+          ))}
+        </select>
       </label>
       {error !== null && <p className="error-text">{error}</p>}
       <div className="row">

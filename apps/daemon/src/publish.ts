@@ -108,7 +108,150 @@ export function buildZip(entries: ZipEntry[], now = new Date()): Buffer {
   return Buffer.concat([...locals, centralBuffer, end]);
 }
 
-const REQUIRED: Array<{ kind: string; key: string; label: string; stage: string; required: boolean }> = [
+export type ChecklistExtra = {
+  /** Result of scanning the latest script for the attached profile's banned words. */
+  style?: { bannedWords: string[]; hits: Array<{ word: string; count: number }>; checked: boolean } | null;
+  /** Card counts per entity type, so card-backed stages can be judged too. */
+  entityCounts?: EntityCounts;
+  /**
+   * The project's scenario pack. Its required stages become the checklist, so a
+   * novel project is never asked for a shot list and a video project is never
+   * asked for a chapter. Missing means "use the legacy video list".
+   */
+  scenario?: ScenarioChecklistSource | null;
+};
+
+export type ScenarioChecklistSource = {
+  stages: Array<{
+    key: string;
+    label: string;
+    required: boolean;
+    produces: string[];
+    /** Stages backed by cards count cards instead of artifacts. */
+    view?: string;
+    entityType?: string;
+  }>;
+};
+
+export type EntityCounts = Record<string, number>;
+
+export function buildChecklist(artifacts: ArtifactSummary[], extra: ChecklistExtra = {}): ChecklistItem[] {
+  const items: ChecklistItem[] = [];
+
+  if (extra.scenario !== undefined && extra.scenario !== null) {
+    const counts = extra.entityCounts ?? {};
+    for (const stage of extra.scenario.stages) {
+      // Card-backed stages (novel chapters, course lessons) have no artifact; the
+      // work lives in entity cards, so counting artifacts would always read "missing".
+      // Board and document stages are the same shape with a different presentation.
+      if (
+        (stage.view === 'entities' || stage.view === 'board' || stage.view === 'document') &&
+        stage.entityType !== undefined
+      ) {
+        const cards = counts[stage.entityType] ?? 0;
+        items.push({
+          key: stage.key,
+          label: stage.label,
+          ok: cards > 0,
+          detail: cards > 0 ? `${cards} 张卡片` : '还没有卡片',
+          stage: stage.key,
+          required: stage.required,
+        });
+        continue;
+      }
+      if (stage.produces.length === 0) {
+        // A stage with no artifact (e.g. "发布") still shows up as a manual step so
+        // the user sees the full pipeline rather than a truncated one.
+        if (stage.required) {
+          items.push({
+            key: stage.key,
+            label: stage.label,
+            ok: false,
+            detail: '需手动完成',
+            stage: stage.key,
+            required: false,
+          });
+        }
+        continue;
+      }
+      for (const kind of stage.produces) {
+        const found = artifacts.filter((artifact) => artifact.kind === kind);
+        items.push({
+          key: `${stage.key}:${kind}`,
+          label: `${stage.label} · ${kindLabel(kind)}`,
+          ok: found.length > 0,
+          detail: found.length > 0 ? `${found.length} 个版本` : stage.required ? '尚未生成' : '可选，未生成',
+          stage: stage.key,
+          required: stage.required,
+        });
+      }
+    }
+  } else {
+    for (const requirement of LEGACY_REQUIRED) {
+      const found = artifacts.filter((artifact) => artifact.kind === requirement.kind);
+      items.push({
+        key: requirement.key,
+        label: requirement.label,
+        ok: found.length > 0,
+        detail: found.length > 0 ? `${found.length} 个版本` : requirement.required ? '尚未生成' : '可选，未生成',
+        stage: requirement.stage,
+        required: requirement.required,
+      });
+    }
+
+    items.push({
+      key: 'cover',
+      label: '封面 brief',
+      ok: artifacts.some((artifact) => artifact.kind === 'publish-pack'),
+      detail: '封面文案包含在发布包中',
+      stage: 'package',
+      required: true,
+    });
+
+    // Subtitle export is a bonus deliverable: missing it never blocks the pack.
+    const subtitles = artifacts.filter((artifact) => artifact.kind === 'subtitle').length;
+    items.push({
+      key: 'subtitle',
+      label: '字幕 SRT',
+      ok: subtitles > 0,
+      detail: subtitles > 0 ? `${subtitles} 个版本` : '可选，脚本页可一键导出',
+      stage: 'script',
+      required: false,
+    });
+  }
+
+  // Style lint is advisory: it reports banned words but must not hold the export.
+  const style = extra.style ?? null;
+  if (style === null) {
+    items.push({
+      key: 'style',
+      label: '风格检查',
+      ok: true,
+      detail: '未挂载风格档案',
+      stage: 'settings',
+      required: false,
+    });
+  } else {
+    const hitText = !style.checked
+      ? `尚无脚本可查（${style.bannedWords.length} 个禁用词待查）`
+      : style.hits.length === 0
+        ? `未命中 ${style.bannedWords.length} 个禁用词`
+        : style.hits.map((hit) => `${hit.word}×${hit.count}`).join('、');
+    // Not ok when there is nothing to scan yet: "unchecked" must not read as "clean".
+    items.push({
+      key: 'style',
+      label: '风格检查',
+      ok: style.checked && style.hits.length === 0,
+      detail: hitText,
+      stage: 'script',
+      required: false,
+    });
+  }
+
+  return items;
+}
+
+const LEGACY_REQUIRED: Array<{ kind: string; key: string; label: string; stage: string; required: boolean }> = [
   { kind: 'topic-card', key: 'topic', label: '选题卡', stage: 'topic', required: true },
   { kind: 'research-notes', key: 'research', label: '资料卡', stage: 'research', required: true },
   { kind: 'script', key: 'script', label: '脚本', stage: 'script', required: true },
@@ -116,29 +259,29 @@ const REQUIRED: Array<{ kind: string; key: string; label: string; stage: string;
   { kind: 'publish-pack', key: 'package', label: '发布包（标题/简介/标签）', stage: 'package', required: true },
 ];
 
-export function buildChecklist(artifacts: ArtifactSummary[]): ChecklistItem[] {
-  const items: ChecklistItem[] = REQUIRED.map((requirement) => {
-    const found = artifacts.filter((artifact) => artifact.kind === requirement.kind);
-    return {
-      key: requirement.key,
-      label: requirement.label,
-      ok: found.length > 0,
-      detail: found.length > 0 ? `${found.length} 个版本` : requirement.required ? '尚未生成' : '可选，未生成',
-      stage: requirement.stage,
-      required: requirement.required,
-    };
-  });
-
-  items.push({
-    key: 'cover',
-    label: '封面 brief',
-    ok: artifacts.some((artifact) => artifact.kind === 'publish-pack'),
-    detail: '封面文案包含在发布包中',
-    stage: 'package',
-    required: true,
-  });
-
-  return items;
+function kindLabel(kind: string): string {
+  switch (kind) {
+    case 'topic-card':
+      return '选题卡';
+    case 'research-notes':
+      return '资料卡';
+    case 'script':
+      return '脚本';
+    case 'shot-list':
+      return '分镜表';
+    case 'subtitle':
+      return '字幕';
+    case 'publish-pack':
+      return '发布包';
+    case 'review-report':
+      return '复盘报告';
+    case 'outline':
+      return '大纲';
+    case 'chapter':
+      return '章节';
+    default:
+      return kind;
+  }
 }
 
 export function isExportableKind(kind: string): boolean {
@@ -147,7 +290,10 @@ export function isExportableKind(kind: string): boolean {
     kind === 'research-notes' ||
     kind === 'script' ||
     kind === 'shot-list' ||
-    kind === 'publish-pack'
+    kind === 'subtitle' ||
+    kind === 'publish-pack' ||
+    kind === 'outline' ||
+    kind === 'chapter'
   );
 }
 

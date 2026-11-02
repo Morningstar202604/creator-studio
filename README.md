@@ -1,52 +1,65 @@
 # 稿台 Creator Studio
 
-**面向个人创作者的本地优先 AI Agent 制片台。**
-把「选题 → 资料 → 脚本 → 分镜 → 包装 → 发布包 → 复盘」串成一条可监督、可恢复、可追责的流水线；素材留在本机，模型随便换。
+**给一个人独立交付作品的本地优先创作台。**
 
-[快速开始](#快速开始) · [界面一览](#界面一览) · [核心能力](#核心能力) · [命令行](#命令行) · [架构](#架构) · [对标](#对标与差异) · [English](README.en.md)
+视频、小说、播客、课程、长文——每一样都是一个项目，有既定的流水线、带版本的产物，
+以及一份必须全绿才能导出的检查表。模型可以指向任何地方：本地端点或远程 API。
+除非你主动配置远程模型，否则文件不会离开这台机器。
+
+[快速开始](#快速开始) · [界面](#界面) · [它能做什么](#它能做什么) · [架构](#架构) · [验证](#验证) · [English](README.en.md)
 
 ![项目列表](docs/screenshots/01-projects-light.png)
 
-## 它解决什么问题
+---
 
-创作者的日常工具是碎的：选题靠刷榜，资料散在几十个标签页，脚本在文档里，封面标题另开一个窗口，复盘靠记忆。
-通用 AI 助手帮不上忙——它没有项目上下文、碰不到你的文件、每次都要从头讲一遍。
+## 它消除的问题
 
-稿台把「一期视频」当成一个**项目**，用一个能真正读写文件、调用工具、按预算花钱的 Agent 流水线推进它，
-并在每个关键节点停下来等你拍板。它不替你发布，也不替你删素材。
+活是一件，工具是十五件。选题来自榜单，资料散在三十个标签页，脚本躺在文档里，
+封面和标题在另一个软件里做，复盘靠回忆。
 
-## 界面一览
+稿台把「项目」当作单位。项目知道自己进行到哪个阶段、有哪些产物、缺什么、
+哪些已经批准。模型可以起草每个阶段，由你判断这个阶段是否完成。
+导出是本地行为——不会替你把内容上传到任何平台。
 
-| 工作台：阶段、产物、检查表、派活 | 脚本：写完即改，diff 对照 |
+---
+
+## 界面
+
+| 工作台：阶段、产物、检查表 | 脚本：就地写，就地改 |
 |---|---|
 | ![工作台](docs/screenshots/02-workspace-light.png) | ![脚本](docs/screenshots/05-script-light.png) |
 
-| 选题：3 张卡、四项评分 | 复盘：趋势与完播率 |
+| 选题：带评分的候选 | 复盘：趋势与完播 |
 |---|---|
 | ![选题](docs/screenshots/03-topic-light.png) | ![复盘](docs/screenshots/09-review-light.png) |
 
-| 发布：检查表 + 一键导出 | 深色主题 |
+| 发布：检查表卡住导出 | 深色主题 |
 |---|---|
 | ![发布](docs/screenshots/08-publish-light.png) | ![深色](docs/screenshots/15-projects-dark.png) |
 
-更多截图见 [`docs/screenshots/`](docs/screenshots/)（32 张，含 1100 / 900 宽度响应式、命令面板、记忆检索与深色主题）。
-演示录屏：[`docs/media/demo.mp4`](docs/media/demo.mp4)（24 秒）· [`docs/media/demo.gif`](docs/media/demo.gif)。
+[`docs/screenshots/`](docs/screenshots/) 里有七十五张截图：每个页面的明暗两套、
+1440 / 1100 / 900 三档宽度，以及命令面板、记忆检索、场景包、关系图、叙事时间轴与写作台。
+演示录屏：[`docs/media/demo.mp4`](docs/media/demo.mp4)。
+
+---
 
 ## 快速开始
 
-三种跑法，任选其一。
+三种跑法，选一种。
 
-### 1. 桌面端（推荐给最终用户）
+### 1. 桌面端
 
 ```bash
 pnpm install
 pnpm -r build
+node scripts/install-daemon-deps.mjs
 cd apps/desktop && pnpm tauri build
 ```
 
-产物：`apps/desktop/src-tauri/target/release/bundle/nsis/CreatorStudio_0.2.0_x64-setup.exe`（11.9 MB，内置 daemon 运行时，装完即用）。
+产物在 `apps/desktop/src-tauri/target/release/bundle/`。安装包里带了 daemon 文件，
+但启动时仍要求系统 `PATH` 里有 Node.js ≥ 22。构建需要 Rust。
 
-### 2. 浏览器 + 本地 daemon（推荐给开发与演示）
+### 2. 浏览器 + 本地 daemon —— 开发时最方便
 
 ```bash
 pnpm install && pnpm -r build
@@ -54,22 +67,21 @@ pnpm --filter @creator-studio/daemon start -- --port 7878
 # 打开 http://127.0.0.1:7878/
 ```
 
-daemon 会直接托管构建好的前端；没有单独的前端服务，也不需要配 CORS。
+daemon 自己托管构建好的前端。没有独立的前端服务，不需要配 CORS。
 
-### 3. 只要 API / 脚本化
+### 3. 只要 API 或 CLI
 
 ```bash
 node apps/daemon/dist/main.js --port 7878
 node apps/cli/dist/main.js health
 ```
 
-## 配置模型
+### 接模型
 
-两种方式，选一种：
+界面里：**设置 → 模型** → Base URL、模型名、API Key → 保存 → 测试连接。
+密钥写入 `<dataDir>/secrets.json`，权限 0600，不进 SQLite、不进日志、不进事件流。
 
-**界面里配（密钥进本机密钥库）**：设置 → 模型 → 填 Base URL / 模型名 / API Key → 保存密钥 → 测试连接。
-
-**环境变量（适合 CI 或临时试用）**：
+或用环境变量：
 
 ```bash
 export MODEL_BASE_URL="https://api.openai.com/v1"
@@ -78,119 +90,240 @@ export MODEL_NAME="gpt-4o-mini"
 node apps/daemon/dist/main.js --port 7878
 ```
 
-支持任何 OpenAI 兼容端点（OpenAI、DeepSeek、通义、Kimi、GLM、Ollama、vLLM…）以及 Anthropic 原生协议。
-密钥只写入 `<dataDir>/secrets.json`（0600），**不会进 SQLite、不会进日志、不会进事件流**。
+支持 OpenAI 兼容端点与 Anthropic 原生协议。用远程模型时，提示词与相关项目上下文
+会发送到该服务商；用远程 embeddings 时，待索引文本也会发送。把未发表的稿子交给它之前，
+先确认服务商的数据政策。
 
-> 本项目已在真实模型上跑通全链路：本机自定义端点 + `glm-5.3-flash` / `deepseek-v4.1-flash`，
-> 选题 → 资料 → 脚本 → 分镜 → 包装 → 发布包 6 个阶段全部产出并通过 schema 校验（见「验证记录」）。
+---
 
-## 核心能力
+## 它能做什么
 
-| 能力 | 说明 |
+### 场景包：一套引擎，六种创作活
+
+场景包是 JSON。它声明阶段、每个阶段用六个视图中的哪一个、卡片类型及其字段、
+卡片之间的关系，以及检查表。引擎只读取场景包，从不执行包里的代码。
+
+| 场景包 | 阶段 | 卡片 |
+|---|---|---|
+| 中长视频 | 选题 · 资料 · 脚本 · 分镜 · 包装 · 发布 · 复盘 | — |
+| 长篇小说 | 设定 · 世界观 · 大纲 · 章节 · 修订 · 投稿 | 角色 · 章节 · 地点 · 伏笔 |
+| 播客 | 选题 · 资料 · 提纲 · 逐字稿 · 剪辑单 · 发布 | 嘉宾 · 问题 |
+| 课程 | 目标 · 调研 · 大纲 · 课时 · 练习 · 上线 | 课时 · 练习 |
+| 文案 | 简报 · 素材 · 初稿 · 多平台 · 配图 · 发布 | 素材 · 读者 |
+| 短视频 | 钩子 · 口播稿 · 镜头 · 字幕 · 发布 | 镜头 |
+
+新增场景是一份 JSON，不是一次改代码。复制一个内置包，改阶段，导入。
+遇到不认识的视图会连带支持列表一起拒绝，而不是等到运行时才炸。
+
+### 六个视图
+
+`generate`（模型出产物）· `entities`（卡片板，可按字段分组看板）·
+`document`（单栏写作台）· `publish`（检查表卡住导出）· `review`（指标与归因）·
+`board`（拖拽换列）。
+
+### 写作台
+
+声明了 `document` 的阶段会变成：章节栏、无干扰编辑器、实时字数、
+本章目标进度环、全书进度、章节篇幅柱。900ms 自动保存，按章隔离，
+切章不串稿。一键导出 Word（`.docx`）与 Markdown。
+
+### 叙事工具
+
+关系图把每张卡片渲染成网络，带类型着色与正反向关系词；点一个节点只看它的直接关系。
+时间轴按序号把章节横排，伏笔从埋设章连到回收章，未回收的线红框标出，
+旁边列出还欠哪几条。
+
+### 流水线保证
+
+| 关注点 | 行为 |
 |---|---|
-| 七段流水线 | 选题 / 资料 / 脚本 / 分镜 / 包装 / 发布 / 复盘，每段独立页面与版本历史 |
-| 结构化产物 | 每类产物有 zod 契约；模型输出先矫正（字符串数字、单值转数组、嵌套包装）再校验，失败自动带示例重试一次 |
-| 审批门 | 删除、写工作区外、执行命令等高风险动作必须人工批准；批准后可「继续执行」，一次批准只用一次 |
-| 可恢复 | 每步转录落盘；崩溃把在途 Run 标为 `INTERRUPTED`；批准后可从中断处续跑 |
-| 预算与花费 | 每次生成/运行都建 Run 行记账；月度与单项目双上限；顶栏常驻「花费 / 上限」 |
-| 工具权限 | `auto / ask / deny` 三档，deny > ask > auto，按工具 × 路径 glob 判定；无 grant 直接拒绝 |
-| 审计 | 每次工具调用记录目标、判定、耗时、结果；`GET /v1/audit` 可导出 |
-| 发布包 | 检查表全绿才允许导出；zip 内含全部产物 + `README.md` + `manifest.json`（逐文件 sha256） |
-| 自动化 | 按间隔（每小时…每周）为指定项目重新生成某类产物；daemon 内置调度，也可「立即运行」 |
-| 资料库 | 跨项目产物检索、类型筛选、内容预览 |
-| 项目记忆 | 所有产物切片化索引，混合检索（FTS5 子串 + 向量），生成时自动注入相关历史片段；默认离线哈希嵌入，可切到模型的 `/embeddings` |
-| 复盘 | 手工回填播放/点赞/评论/完播/收益，ECharts 趋势与环比 |
-| 多租户隔离 | 云端存储层按 `userId` 作用域，跨租户读写一律 404 并记安全事件；Run 指定外部设备时静默降级为云端任务 |
-| 主题 | 浅色 / 深色 / 跟随系统，全部 token 化并做过 WCAG 对比度核算 |
-| 命令面板 | `Ctrl/Cmd + K` 搜项目、跳页面；`Ctrl+Shift+A` 直达待办 |
+| 结构化输出 | 每类产物一份 zod 契约。模型输出先矫正（数字字符串、单值转数组、嵌套解包）再校验，失败带示例重试一次 |
+| 审批 | 删除、写工作区外、执行命令必须人工批准。批准一次只用一次，批准后从中断处续跑 |
+| 恢复 | 每步转录落盘。崩溃把在途 Run 标为 `INTERRUPTED`；批准后可续跑 |
+| 工具权限 | 按工具 ×路径 glob 判定 `auto / ask / deny`，deny 优先于 ask 优先于 auto，无授权即拒绝 |
+| 审计 | 每次工具调用记录目标、判定、耗时与结果，可通过 `GET /v1/audit` 导出 |
+| 预算 | 按 Run 记录用量与花费；智能体运行支持硬性预算上限 |
+| 溯源 | 给出参考链接就真抓原文（私网、内嵌凭据、非 http(s) 一律拒绝；robots 与体积有守门）。每条事实标注是否可核，不可核的降为 low，产物末尾附抓取记录与逐源 sha256 |
+| 记忆 | 所有产物切片索引，检索混合 FTS5 子串与向量排序。默认离线特征哈希嵌入，可切到服务商的 `/embeddings` |
+| 风格 | 可复用的语气 / 受众 / 禁用词档案，按项目挂载并注入每次生成。禁用词命中会在检查表标出 |
+
+### 导出与复盘
+
+发布包是一个 ZIP，只有当所有必需检查项全绿时才会生成。里面是每类产物的最新版、
+一份 `README.md`，以及逐文件 sha256 的 `manifest.json`。导出会把项目推进到发布阶段。
+不会向任何平台发送内容。
+
+指标（播放、点赞、评论、完播、收益）手工回填，用 ECharts 画趋势与环比。
+一键让模型做归因，报告成为带版本的产物，并把项目推进到复盘阶段。
+
+### 各处细节
+
+明 / 暗 / 跟随系统三套主题，每个颜色都是 token，每个 token 都做过对比度核算。
+`Ctrl/Cmd + K` 命令面板。响应式下探到 900px。字幕可导出 SRT，
+时间是按标点与文本长度估算的，必须按实际录音校准——界面在导出处就写明了这一点。
+
+---
 
 ## 命令行
 
 ```bash
 node apps/cli/dist/main.js health
-node apps/cli/dist/main.js new "为什么 AI 编程正在杀死初级开发者" --platform bilibili --tag AI
+node apps/cli/dist/main.js new "为什么 AI 正在改变初级岗位" --platform bilibili --tag AI
 node apps/cli/dist/main.js pipeline <projectId> "AI 与初级岗位"
 node apps/cli/dist/main.js publish <projectId>
 ```
 
-完整命令见 [`docs/CLI.md`](docs/CLI.md)。CLI 与界面走同一套 HTTP API，也可以指向远程 daemon（`--url`）。
+完整列表见 [`docs/CLI.md`](docs/CLI.md)。CLI 与界面走同一套 HTTP API，
+可以用 `--url` 指向远程 daemon。
+
+---
 
 ## 架构
 
 ```
 apps/
-  desktop/   React 19 + Vite + Tauri 2（HashRouter，兼顾 tauri:// 与 http://）
-  daemon/    Fastify 5：55 条路由、SSE、静态托管、调度器、密钥库
-  cloud/     云端控制面（配对 / 隧道 / 配额 / 计费，内存实现）
-  cli/       cs 命令：与界面同一套 API
+  desktop/   React 19 + Vite + Tauri 2（HashRouter，tauri:// 与 http:// 都能跑）
+  daemon/    Fastify 5 —— 79 条路由、SSE、静态托管、调度器、密钥库
+  cloud/     控制面：配对、隧道、配额、计费
+  cli/       cs 命令，与界面同一套 API
 packages/
-  protocol/       实体 schema、不变量、Agent Link 帧、产物契约与容错矫正
-  tools/          路径沙箱（realpath 防符号链接）、授权判定、审批门、审计、注入围栏
-  model-gateway/  OpenAI / Anthropic 适配器、SSE 解析、预算预检、退避重试、脱敏
-  store-sqlite/   7 个迁移、16 张表、仓储（Run/Project/Artifact/Settings/Automation/Metrics/Memory）
+  protocol/       实体 schema、不变量、产物契约、输出矫正
+  tools/          路径沙箱（realpath、防符号链接）、授权、审批门、审计
+  model-gateway/  OpenAI 与 Anthropic 适配器、SSE 解析、预算预检、退避、脱敏
+  store-sqlite/   12 个迁移、SQLite 仓储
   agent-core/     Agent 循环、工具回灌、审批暂停与恢复、转录落盘
 ```
 
-详细设计见 [`ARCHITECTURE.md`](ARCHITECTURE.md)（唯一真理源）、接口清单见 [`docs/API.md`](docs/API.md)。
+**设计规则：** 引擎拥有行为，视图是固定的六个，场景包是数据。
+所以新增一种创作活不需要写代码，所以导入别人的场景包不会执行他的代码。
 
-### 安全边界（默认值）
+完整设计：[`ARCHITECTURE.md`](ARCHITECTURE.md)。HTTP 接口：[`docs/API.md`](docs/API.md)。
+决策记录：[`docs/adr/`](docs/adr/)。
 
-- daemon 只绑 `127.0.0.1`；CORS 白名单只放行回环与 Tauri 伪源。
-- 所有文件路径经 `resolveInsideWorkspace`：拒绝绝对路径、`..`、符号链接逃逸。
-- 前端渲染 Markdown 一律经 DOMPurify 消毒，模型输出视为不可信输入。
-- 云端不直连本机：本地 daemon 主动出站建立 WSS 隧道，设备令牌可吊销、可轮换。
+### 安全默认值
 
-## 验证记录
+- daemon 只绑 `127.0.0.1`。CORS 只放行回环与 Tauri 伪源。
+- 所有文件路径经 `resolveInsideWorkspace`，拒绝绝对路径、`..` 与符号链接逃逸。
+- 渲染 Markdown 一律经 DOMPurify 消毒。模型输出视为不可信输入。
+- API Key 存在 0600 的密钥文件里，不进数据库、不进日志。
+- 云端提供设备配对与隧道，设备令牌可吊销、可轮换；端到端未打通的部分见「已知边界」。
 
-在本机（Windows 11 / Node 24 / Rust 1.99）实测，命令与结果：
+---
 
+## 验证
+
+```bash
+pnpm verify          # lint → build → typecheck → test → 离线冒烟 → 安全 → 对比度 → 版本一致
+pnpm -r test         # 657 passed, 0 skipped
+pnpm test:postgres   # 对真实数据库跑租户隔离（需显式开启）
 ```
-pnpm -r test            9 个包，421 passed
-pnpm -r build           all Done
-pnpm -r typecheck       all Done
-node scripts/security-audit.mjs   145 files, 5 checks PASS
-python scripts/check-contrast.py  全部通过
-npx tauri build         CreatorStudio_0.2.0_x64-setup.exe (11.93 MiB)
-python scripts/shoot.py 25 张截图（+7 张演示截图，共 32），0 console error，0 横向溢出
-node scripts/smoke-e2e.mjs       真实模型端到端：5 阶段生成 + 检查表 + 导出 zip
+
+改了界面还必须过真浏览器：
+
+```bash
+python scripts/shoot.py --base http://127.0.0.1:7878         # 26 页，布局断言
+python scripts/click-sweep.py --base http://127.0.0.1:7878   # 每个控件点一遍 + 键盘巡检
 ```
 
-真实模型端到端（非 mock）：
+每一层能证明什么、不能证明什么，写在 [`docs/VERIFICATION.md`](docs/VERIFICATION.md)。
+当前状态（包括**未**验证项）写在 [`docs/STATUS.md`](docs/STATUS.md)。简版：
 
-- 端点：本机自定义 OpenAI 兼容网关，模型 `glm-5.3-flash` / `deepseek-v4.1-flash`
-- 结果：6 个阶段产物全部生成、schema 校验通过；发布包 14.6 KB、含 6 个文件、`manifest.json` sha256 可复核
-- 期间修掉两个真实缺陷：模型把 `risks` 输出成字符串导致 schema 失败（已加容错矫正）、
-  模型无视「只输出 JSON」返回散文（已加输出契约 + 一次带示例的纠正重试）
+| 已验证 | 未验证 |
+|---|---|
+| 单元、契约与存储测试；离线模型契约；安全与对比度审计；浏览器布局与交互巡检；对本地模型桩的完整产物链路 | 真实厂商账号、macOS / Linux 安装包、自动更新往返、Postgres 压测、桌面到云端的执行链、任何人工省时数字 |
 
-## 对标与差异
+本仓库不发布任何省时数字，因为没有测过。
 
-同类开源项目里，Dify / n8n / langflow 强在通用编排，OpenHands / cline 强在 Agent 执行，MoneyPrinterTurbo 强在一键成片。
-稿台的差异是**项目制的七段流水线 + 本地优先 + 审批与预算的默认约束**。
+---
 
-已迁移的机制与仍存差距，见 [`docs/COMPETITIVE.md`](docs/COMPETITIVE.md)（含 15 个项目的真实 star / license / 机制拆解）。
+## 与同类项目的差别
+
+Dify、n8n、langflow 是通用编排。OpenHands、cline 是 Agent 执行环境。
+MoneyPrinterTurbo 是一键成片。稿台更窄：一个项目、一条由场景包定义的流水线、
+本地优先存储、带审批的工具，以及让模型输出可复现的产物契约。
+
+对十五个项目的逐机制对标，连同仍然存在的差距，在
+[`docs/COMPETITIVE.md`](docs/COMPETITIVE.md)。
+
+---
+
+## 已知边界
+
+写在这里，是为了让你在死线之前就知道。
+
+1. **章节自动保存整章覆盖**：同一章两个客户端会互相覆盖，单人使用是安全的。见 §0.19。
+2. **写作台是纯 Markdown**：没有批注、修订模式、目录域；复杂版式交给导出的 Word。
+3. **默认记忆检索是词法的**：n-gram 特征哈希加子串匹配，不是神经语义模型。
+   真正的语义检索需要支持 `/embeddings` 的服务商，界面在选择处就写明。
+4. **字幕时间是估算的**：按标点与文本长度推算，不与音视频对齐，需按录音校准。
+5. **云端未端到端验证**：配对、隧道、配额与租户隔离都在，Postgres 谓词也在 SQL 层，
+   但桌面到云端的任务从未真正执行过。
+6. **自动更新接线未验证**：签名与 updater 插件已就位，但一次真实的旧版→新版升级
+   从未做过。Windows 安装包未做代码签名，SmartScreen 会提示。
+7. **没有真人计时研究**：你在别处看到的这类工具的提效数字，都不来自这个项目。
+
+---
 
 ## 开发
 
 ```bash
 pnpm install
-pnpm -r test           # 421 tests
-pnpm -r typecheck
-pnpm -r build
-python scripts/shoot.py --base http://127.0.0.1:7878   # 真浏览器截图 + 布局断言
+pnpm verify            # 全部门禁，CI 跑的就是它
+pnpm -r test           # 657 passed, 0 skipped
+```
+
+两个脚本让完整链路在没有凭据的情况下也能复现：
+
+```bash
+node scripts/stub-model.mjs 7996            # 确定性的 OpenAI 兼容桩
+node scripts/seed-demo.mjs http://127.0.0.1:7878   # 可展示的演示数据集
 ```
 
 - 贡献指南：[`CONTRIBUTING.md`](CONTRIBUTING.md)
 - 安全策略：[`SECURITY.md`](SECURITY.md)
+- 行为准则：[`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)
 - 变更记录：[`CHANGELOG.md`](CHANGELOG.md)
-- 产品思考：[`docs/PRODUCT-BRAINSTORM.md`](docs/PRODUCT-BRAINSTORM.md)
+- 发布流程：[`docs/RELEASING.md`](docs/RELEASING.md)
+- 架构文档：[`ARCHITECTURE.md`](ARCHITECTURE.md)
+- 接口清单：[`docs/API.md`](docs/API.md)
 - 界面规格：[`docs/UI-SPEC.md`](docs/UI-SPEC.md) · 设计系统：[`docs/DESIGN-SYSTEM.md`](docs/DESIGN-SYSTEM.md)
 
-## 已知边界
+## 用小说场景试试
 
-1. 云端为单机内存实现，未接 Postgres/Redis；重启丢云端状态（本地数据不受影响）。多租户隔离已在存储层实现并有测试，但换 Postgres 时需把同样的 `WHERE user_id` 谓词与 RLS 搬过去。
-2. 自动更新未实现（无代码签名证书），NSIS 包需手动升级。
-3. 默认记忆检索是**词法向量 + 子串匹配**（离线、零成本），不是神经语义模型；只有在设置里指定支持 `/embeddings` 的模型后才做真正的语义检索。这一点在界面与代码里都明确标注，不把词法匹配说成语义理解。
-4. 「8 小时降到 2 小时」是产品假设，尚未做真人计时。
+```bash
+# 建一个小说项目：阶段顺序由场景包决定
+curl -s -X POST http://127.0.0.1:7878/v1/projects \
+  -H 'content-type: application/json' \
+  -d '{"title":"雾港纪事","scenarioId":"novel"}'
+
+# 加一张角色卡：字段由 novel 场景包声明，缺必填项会被拒
+curl -s -X POST http://127.0.0.1:7878/v1/projects/<projectId>/entities \
+  -H 'content-type: application/json' \
+  -d '{"type":"character","title":"林砚","fields":{"name":"林砚","role":"主角","goal":"查清父亲失踪的真相"}}'
+```
+
+界面里：项目卡上的场景徽标 → 工作台按场景显示阶段 → 「打开卡片」进入角色、章节、地点、伏笔。
+
+## 自定义场景
+
+```json
+POST /v1/scenarios
+{
+  "id": "screenplay",
+  "name": "剧本",
+  "stages": [
+    { "key": "logline", "label": "一句话", "view": "generate", "produces": ["topic-card"], "required": true },
+    { "key": "scene",   "label": "场次",   "view": "entities", "entityType": "scene", "produces": ["chapter"], "required": true }
+  ],
+  "entityTypes": [
+    { "key": "scene", "label": "场次", "titleField": "slug", "fields": [
+      { "key": "slug", "label": "场次号", "type": "text", "required": true }
+    ]}
+  ]
+}
+```
+
+`inherits` 让子包只写增量、不必重抄父包：同名阶段覆盖，深度上限 4，循环会被拒绝。
 
 ## 许可证
 

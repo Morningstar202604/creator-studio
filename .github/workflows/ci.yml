@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
 
@@ -31,15 +31,70 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - name: Lint source
+        run: pnpm lint
+
       # One command for the whole gate. It builds first because workspace packages
       # resolve each other through emitted dist/*.d.ts, which are not committed.
       - name: Verify (build → typecheck → test → audits)
         run: pnpm verify
 
+  postgres-integration:
+    name: Postgres integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16.4
+        env:
+          POSTGRES_DB: creator_studio
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.11.2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+
+      - name: Run real Postgres integration suite
+        env:
+          CLOUD_TEST_DATABASE_URL: postgres://postgres@127.0.0.1:5432/creator_studio
+        run: pnpm test:postgres
+
   desktop:
-    name: desktop bundle (windows)
-    runs-on: windows-latest
+    name: desktop bundle (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            bundle: nsis
+            artifact: creator-studio-nsis
+            path: apps/desktop/src-tauri/target/release/bundle/nsis/*.exe
+          - os: ubuntu-latest
+            bundle: deb
+            artifact: creator-studio-deb
+            path: apps/desktop/src-tauri/target/release/bundle/deb/*.deb
+          - os: macos-latest
+            bundle: dmg
+            artifact: creator-studio-dmg
+            path: apps/desktop/src-tauri/target/release/bundle/dmg/*.dmg
     steps:
       - uses: actions/checkout@v4
 
@@ -54,6 +109,13 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # Tauri needs WebKitGTK on Linux and Xcode command line tools on macOS.
+      - name: Linux system dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
       - run: pnpm install --frozen-lockfile
 
       - run: pnpm -r build
@@ -61,12 +123,63 @@ jobs:
       - name: Stage daemon runtime
         run: node scripts/install-daemon-deps.mjs
 
-      - name: Build installer
+      - name: Build bundle
         working-directory: apps/desktop
-        run: pnpm tauri build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: pnpm tauri build --bundles ${{ matrix.bundle }}
 
       - uses: actions/upload-artifact@v4
         with:
-          name: creator-studio-nsis
-          path: apps/desktop/src-tauri/target/release/bundle/nsis/*.exe
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.path }}
           if-no-files-found: error
+
+  browser-sweep:
+    name: browser click sweep
+    runs-on: ubuntu-latest
+    needs: verify
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.11.2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: 0.13.6
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+
+      - name: Install browser sweep dependencies
+        run: |
+          uv venv .tmp/click-sweep-venv
+          uv pip install --python .tmp/click-sweep-venv/bin/python -r scripts/requirements-click-sweep.txt
+          .tmp/click-sweep-venv/bin/python -m playwright install --with-deps chromium
+
+      - name: Start daemon and run browser click sweep
+        run: |
+          mkdir -p .tmp/click-db .tmp/click-ws
+          node apps/daemon/dist/main.js --port 7878 --dataDir .tmp/click-db --workspace .tmp/click-ws > .tmp/click-daemon.log 2>&1 &
+          daemon_pid=$!
+          cleanup() {
+            if kill -0 "$daemon_pid" 2>/dev/null; then
+              kill "$daemon_pid"
+              wait "$daemon_pid" 2>/dev/null || true
+            fi
+          }
+          trap cleanup EXIT
+          curl --fail --retry 30 --retry-delay 1 http://127.0.0.1:7878/health
+          curl --fail -X POST http://127.0.0.1:7878/v1/onboarding/complete
+          curl --fail --retry 5 --retry-delay 1 -X POST http://127.0.0.1:7878/v1/projects \
+            -H 'content-type: application/json' \
+            -d '{"title":"CI click sweep","platform":"bilibili"}'
+          .tmp/click-sweep-venv/bin/python scripts/click-sweep.py --base http://127.0.0.1:7878

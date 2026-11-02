@@ -1,17 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type React from 'react';
 import { useParams } from 'react-router-dom';
-import { ApiError, api, type Artifact, type ChecklistItem, type Project } from '../api';
+import { ApiError, api, type Artifact, type ChecklistItem, type Project, type ScenarioPack } from '../api';
 import { AppShell, PageHead } from '../components/AppShell';
-import { ARTIFACT_LABELS, formatBytes, relativeTime } from '../lib/format';
-
-const STAGE_LINKS: Record<string, string> = {
-  topic: 'topic',
-  research: 'research',
-  script: 'script',
-  shotlist: 'shotlist',
-  package: 'package',
-};
+import { ARTIFACT_LABELS, formatBytes, relativeTime, stageHref } from '../lib/format';
 
 export function PublishPage(): React.ReactElement {
   const { id = '' } = useParams<{ id: string }>();
@@ -19,6 +11,7 @@ export function PublishPage(): React.ReactElement {
   const [checklist, setChecklist] = useState<ChecklistItem[]>([]);
   const [ready, setReady] = useState(false);
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
+  const [pack, setPack] = useState<ScenarioPack | null>(null);
   const [busy, setBusy] = useState(false);
   const [reloading, setReloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -31,15 +24,17 @@ export function PublishPage(): React.ReactElement {
 
   const load = useCallback(async () => {
     try {
-      const [projectResult, checklistResult, artifactResult] = await Promise.all([
+      const [projectResult, checklistResult, artifactResult, scenarioResult] = await Promise.all([
         api.getProject(id),
         api.checklist(id),
         api.listArtifacts(id),
+        typeof api.scenarios === 'function' ? api.scenarios() : Promise.resolve({ scenarios: [] }),
       ]);
       setProject(projectResult.project);
       setChecklist(checklistResult.items);
       setReady(checklistResult.ready);
       setArtifacts(artifactResult.artifacts);
+      setPack(scenarioResult.scenarios.find((candidate) => candidate.id === projectResult.project.scenarioId) ?? null);
       setError(null);
     } catch (cause) {
       setError(cause instanceof ApiError || cause instanceof Error ? cause.message : String(cause));
@@ -89,12 +84,25 @@ export function PublishPage(): React.ReactElement {
     }
   };
 
+  // Everything the export can actually ship: the zip writer's own allow-list, so
+  // the count on screen matches the files in the archive (novel outlines and
+  // chapters were missing here while the exporter already included them).
   const openable = useMemo(
     () =>
       artifacts.filter((artifact) =>
-        ['topic-card', 'research-notes', 'script', 'shot-list', 'publish-pack'].includes(artifact.kind),
+        ['topic-card', 'research-notes', 'script', 'shot-list', 'subtitle', 'publish-pack', 'outline', 'chapter'].includes(
+          artifact.kind,
+        ),
       ),
     [artifacts],
+  );
+
+  const missingStageLink = useCallback(
+    (stageKey: string): string | null => {
+      const stage = pack?.stages.find((candidate) => candidate.key === stageKey);
+      return stage === undefined ? null : stageHref(id, stage);
+    },
+    [id, pack],
   );
 
   const required = checklist.filter((item) => item.required !== false);
@@ -142,8 +150,8 @@ export function PublishPage(): React.ReactElement {
                 </span>
                 <span className="label">{item.label}</span>
                 <span className="detail">{item.detail}</span>
-                {!item.ok && STAGE_LINKS[item.stage] !== undefined && (
-                  <a className="link-btn" href={`#/p/${id}/${STAGE_LINKS[item.stage]}`}>
+                {!item.ok && missingStageLink(item.stage) !== null && (
+                  <a className="link-btn" href={`#${missingStageLink(item.stage) as string}`}>
                     去补
                   </a>
                 )}
@@ -155,7 +163,9 @@ export function PublishPage(): React.ReactElement {
         <section className="panel">
           <div className="panel-head">
             <span className="panel-title">文件清单</span>
-            <span className="hint">{openable.length} 个产物将打包</span>
+            <span className="hint">
+              {openable.length} 个产物 + README + manifest，共 {openable.length + 2} 个文件
+            </span>
           </div>
           {openable.length === 0 ? (
             <p className="hint">还没有可发布的产物。</p>

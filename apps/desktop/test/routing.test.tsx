@@ -16,6 +16,29 @@ vi.mock('../src/api', async () => {
         ],
       })),
       listProjects: vi.fn(async () => ({ projects: [] })),
+      scenarios: vi.fn(async () => ({
+        scenarios: [
+          {
+            id: 'video',
+            name: '中长视频',
+            description: '',
+            icon: '',
+            builtin: true,
+            defaultPlatform: 'bilibili',
+            stages: [
+              { key: 'topic', label: '选题', hint: '', produces: ['topic-card'], promptHint: '', required: true },
+              { key: 'research', label: '资料', hint: '', produces: ['research-notes'], promptHint: '', required: true },
+              { key: 'script', label: '脚本', hint: '', produces: ['script'], promptHint: '', required: true },
+              { key: 'shotlist', label: '分镜', hint: '', produces: ['shot-list'], promptHint: '', required: false },
+              { key: 'package', label: '包装', hint: '', produces: ['publish-pack'], promptHint: '', required: true },
+              { key: 'published', label: '发布', hint: '', produces: [], promptHint: '', required: false },
+              { key: 'review', label: '复盘', hint: '', produces: ['review-report'], promptHint: '', required: false },
+            ],
+            entityTypes: [],
+          },
+        ],
+        defaultId: 'video',
+      })),
       getProject: vi.fn(async () => ({
         project: {
           id: 'p1',
@@ -68,6 +91,7 @@ describe('R1 route coverage', () => {
     ['#/p/p1/package', '包装'],
     ['#/p/p1/publish', '发布'],
     ['#/p/p1/review', '复盘'],
+    ['#/p/p1/stage/topic', '选题'],
   ];
 
   for (const [hash, heading] of cases) {

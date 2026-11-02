@@ -208,7 +208,7 @@ ScriptPage*
 ├─ EditorLayout
 │  ├─ ScriptEditor*
 │  │  ├─ EditorToolbar (标题/加粗/列表/引用)
-│  │  ├─ TipTapEditor
+│  │  ├─ ScriptEditor (textarea + Markdown)
 │  │  ├─ CitationMark         # [^1] 上标 + SourcePopover
 │  │  ├─ FactCheckMark        # warn 底纹
 │  │  └─ SelectionToolbar*    # 改写/缩短/更口语/加例子/查证
@@ -226,7 +226,7 @@ ScriptPage*
 
 | 状态 | 位置 | 说明 |
 |---|---|---|
-| 草稿内容 | TipTap 内部 + 防抖自动保存 | 600ms |
+| 草稿内容 | 页面本地 text + 手动保存 | 无自动覆盖，保存即新版本 |
 | 版本号 | Query `['script', projectId, version]` | 服务端权威 |
 | 选中文本 | 组件本地 | 不持久化 |
 | diff 预览 | 组件本地 | 关闭即丢弃 |
@@ -454,6 +454,96 @@ BudgetPage*
 └─ CostBreakdownTable
 ```
 
+### P20 卡片板 `/p/:id/cards/:entityType`（v0.7，v0.12 加拖拽）
+
+```
+EntitiesPage*
+├─ PageHead (新建 / 切卡片视图 / 搜索)
+├─ TypeTabs (角色卡 / 章节卡 / 地点卡 / 伏笔表)
+├─ EntityGrid
+│  └─ EntityCard × n (编辑 / 删除)
+├─ KanbanBoard*                 # ?board=1，view=board 或 document 带 board 配置时
+│  ├─ Column (useDroppable)
+│  │  ├─ Card (useDraggable)
+│  │  │  ├─ DragHandle        # 独立按钮，指针/键盘均可拾起
+│  │  │  └─ OpenButton        # 点击打开抽屉，不触发拖拽
+│  │  └─ DropHint (空列)
+│  └─ DragOverlay             # 拖动中的浮层卡片
+├─ Drawer*
+│  ├─ RelationBlock (关联列表 / 新建关联 / 解除)
+│  ├─ FieldGrid (按场景包字段渲染)
+│  └─ Footer (取消 / 按此卡生成 / 保存)
+├─ ConfirmDialog* (删除确认)
+└─ ToastStack*
+```
+
+状态归属：`cards` 为页面本地副本；拖拽先乐观更新、失败用快照回滚；
+`order` 与分组字段在同一次 PATCH 里提交。
+
+### P21 关系图 `/p/:id/graph`（v0.10）
+
+```
+GraphPage*
+├─ TypeFilter (按实体类型隐藏/显示)
+├─ SearchBox
+├─ CytoscapeCanvas (cose 布局，nodeDimensionsIncludeLabels)
+├─ Legend (类型色)
+└─ SidePanel
+   ├─ CardFields
+   └─ RelationList (正向/反向标签)
+```
+
+### P22 叙事时间轴 `/p/:id/timeline`（v0.11）
+
+```
+TimelinePage*
+├─ CytoscapeCanvas (cytoscape-dagre，rankDir=LR)
+├─ ScrubRow (章节序号按钮 → 滚动定位)
+├─ Legend (实线=回收 / 虚线=埋设 / 红框=未回收)
+└─ SidePanel
+   ├─ OpenThreadList (未回收 / 未连埋设 / 跨度超限)
+   └─ SelectedCardFields
+```
+
+### P23 写作台 `/p/:id/write/:entityType`（v0.12）
+
+```
+DocumentPage*
+├─ PageHead (刷新 / 时间轴 / 导出 Word)
+├─ DeskRail
+│  ├─ FilterInput
+│  ├─ NewChapterButton
+│  └─ ChapterList (序号 / 标题 / 字数; aria-current)
+├─ DeskDoc
+│  ├─ TitleRow (标题 + 保存状态)
+│  ├─ Meta (字数 / 更新时间 / 卡片字段摘要)
+│  ├─ BodyEditor (textarea, Markdown, 900ms 防抖)
+│  └─ Footer (Ctrl/⌘+S 提示 / 保存)
+└─ DeskSide (本章字数 / 段落 / 全书 / 最近导出)
+```
+
+状态归属：`text` 是本页编辑缓冲；`savedText` 用于判断 dirty；延迟保存固定携带
+发起时的卡片 id；切章时以卡片 id 为键同步，保存回包不会覆盖正在输入的内容。
+
+### P24 通用阶段页 `/p/:id/stage/:stageKey`（v0.13）
+
+```
+StagePage*
+├─ PageHead (阶段标签 + 包 hint + 版本数)
+├─ GeneratePanel
+│  ├─ ContextInput
+│  ├─ PromptHint (来自 stage.promptHint)
+│  ├─ ReferenceLinks (仅 research-notes)
+│  └─ RunButton
+├─ ResultPanel
+│  ├─ TopicCards (kind = topic-card)
+│  └─ Markdown (其他 kind)
+└─ VersionList
+```
+
+同一组件也服务 P3/P4/P6/P7 四个固定 URL；区别只是 `stageKey` 来自路由参数还是写死的 prop。
+路由由 `stageHref()` 按视图决定，阶段 key 不参与判断（`premise` / `scene` 等自定义键无需改前端）。
+
 ## 4. 组件清单与归属
 
 | 组件 | 层 | 使用页面 | Props 关键字段 | 状态 |
@@ -478,6 +568,11 @@ BudgetPage*
 | `ConfirmDangerInput` | component | P11 | word, onConfirm | 本地 |
 | `ToggleSwitch` | component | P13, P16 | checked | 受控 |
 | `TagEditor` | component | P7 | tags | 受控 |
+| `Drawer` | component | P20 | open, title, onClose, width, footer | 受控（焦点环绕、Escape、焦点归还） |
+| `ConfirmDialog` | component | P20 等 | open, title, message, onConfirm | 受控 |
+| `ToastStack` / `useToasts` | component | 全部写操作页 | toasts, onDismiss | 本地 |
+| `KanbanBoard` | component | P20 | columns, onMove, onOpen | 受控（dnd-kit） |
+| `Markdown` | component | P3/P4/P7/P8 | content | 本地（DOMPurify 消毒） |
 
 ## 5. 数据依赖矩阵
 
@@ -501,6 +596,11 @@ BudgetPage*
 | P15 | `['devices']` | `device.pair/revoke` | `device.status` |
 | P16 | `['grants']` | `grant.update` | 无 |
 | P17 | `['budget']`, `['usage']` | `budget.update` | 无 |
+| P20 | `['entities', id, type]` | `entity.create/update/delete`, `link.create/delete` | 无 |
+| P21 | `['graph', id]` | 无（只读） | 无 |
+| P22 | `['graph', id]`, `['foreshadow-health', id]` | 无（只读） | 无 |
+| P23 | `['entities', id, type]`, `['manuscript', id]` | `entity.update`（自动保存）, `manuscript.export` | 无 |
+| P24 | `['project', id]`, `['artifacts', id]`, `['scenarios']` | `artifact.generate` | `run.*` |
 
 实时事件统一走 `useRunEvents(runId)`，按 `seq` 合并进 `['run', rid]` 与 `['events', rid]`，不新建 store。
 
@@ -518,7 +618,8 @@ BudgetPage*
 
 ## 7. 待定
 
-1. 编辑器最终选 TipTap（建议）还是 ProseMirror 原生。
-2. 拖拽库用 dnd-kit（建议）还是 react-dnd。
+1. 富文本编辑器（TipTap / ProseMirror）是否引入——目前论证为否：正文是纯 Markdown 产物，
+   富文本会带来不可移植的文档模型（见 ARCHITECTURE §9.11.1）。
+2. ~~拖拽库用 dnd-kit 还是 react-dnd~~——v0.12 已定：`@dnd-kit/core`（键盘可达、无额外 DOM 包裹）。
 3. 图表统一 ECharts，是否引入轻量封装 `@echarts-for-react` 待评估包体。
 4. 是否做组件 Storybook；建议 T7 后补，避免前期拖慢。

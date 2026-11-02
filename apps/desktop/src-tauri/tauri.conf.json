@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "CreatorStudio",
-  "version": "0.3.1",
+  "version": "0.17.1",
   "identifier": "app.creatorstudio.desktop",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -45,6 +45,15 @@
       }
     },
     "shortDescription": "稿台 · 本地优先的创作者 AI 制片台",
-    "longDescription": "本地优先的创作者 AI 工作台：选题、资料、脚本、分镜、包装、发布包一站式完成，带审批、预算与审计，素材不出本机。"
+    "longDescription": "本地优先的创作者 AI 工作台：选题、资料、脚本、分镜、包装、发布包一站式完成，带审批、预算与审计，素材不出本机。",
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEI2RUYwRjYxRkU5OEM4NTYKUldSV3lKaitZUS92dHQrNFBIQ2s5MVVqSThHUGNmM1RRQ0pCczg0VmpLMWFrSlVsZ0RpY3A2YnAK",
+      "endpoints": [
+        "https://gitcode.com/badhope/creator-studio/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

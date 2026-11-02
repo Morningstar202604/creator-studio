@@ -149,7 +149,8 @@ export class SqliteArtifactStore implements ArtifactStore {
       .prepare('SELECT path FROM artifacts WHERE project_id = ? AND kind = ? AND path LIKE ?')
       .all(projectId, kind, `%${baseName}.v%`) as Array<{ path: string }>;
     let max = 0;
-    const suffix = /\.v(\d+)\.md$/;
+    // Any extension: scripts and reports are .md, subtitles are .srt.
+    const suffix = /\.v(\d+)\.[a-z0-9]+$/i;
     for (const row of rows) {
       const fileName = row.path.split('/').pop() ?? '';
       if (!fileName.startsWith(`${baseName}.v`)) continue;

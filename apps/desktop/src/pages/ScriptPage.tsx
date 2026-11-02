@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type React from 'react';
 import { useParams } from 'react-router-dom';
-import { ApiError, api, type Artifact, type Project } from '../api';
+import { ApiError, api, apiExtra, type Artifact, type Project } from '../api';
+import { ToastStack, useToasts } from '../components/Toast';
 import { AppShell } from '../components/AppShell';
 import { applyHunks, diffLines, type DiffHunk } from '../features/diff';
 
@@ -18,13 +19,22 @@ export function ScriptPage(): React.ReactElement {
   const [range, setRange] = useState<{ start: number; end: number }>({ start: 0, end: 0 });
   const [instruction, setInstruction] = useState('更口语、更短');
   const [generating, setGenerating] = useState(false);
+  const { toasts, push, dismiss } = useToasts();
+  const [subtitlePreview, setSubtitlePreview] = useState<{ path: string; content: string } | null>(null);
 
   const load = useCallback(async () => {
     try {
       const [projectResult, artifactResult] = await Promise.all([api.getProject(id), api.listArtifacts(id)]);
       setProject(projectResult.project);
       setArtifacts(artifactResult.artifacts);
-      const latest = artifactResult.artifacts.find((artifact) => artifact.kind === 'script');
+      // Pick the newest script explicitly instead of trusting list order. The
+      // daemon happens to sort by created_at descending today, but a page that
+      // silently shows an older draft after a regeneration is a data-loss-shaped
+      // bug: the user edits what they believe is the current script.
+      const scripts = artifactResult.artifacts
+        .filter((artifact) => artifact.kind === 'script')
+        .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+      const latest = scripts[0];
       if (latest !== undefined) {
         const { content } = await api.getArtifact(latest.id);
         setText(content);
@@ -148,6 +158,21 @@ export function ScriptPage(): React.ReactElement {
   const versions = artifacts.filter((artifact) => artifact.kind === 'script');
   const words = text.replace(/\s+/g, '').length;
   const minutes = Math.max(1, Math.round(words / 260));
+  const subtitles = artifacts.filter((artifact) => artifact.kind === 'subtitle');
+
+  const exportSubtitle = async (): Promise<void> => {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await apiExtra.exportSubtitle(id);
+      push(`已导出 ${result.cues} 条字幕 → ${result.artifact.path}`);
+      await load();
+    } catch (cause) {
+      setError(cause instanceof ApiError || cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <AppShell
@@ -181,7 +206,28 @@ export function ScriptPage(): React.ReactElement {
         <button className="btn" disabled={busy || !dirty} onClick={() => void save()}>
           {busy ? '保存中…' : '保存为新版本'}
         </button>
+        <button
+          className="btn"
+          disabled={busy || versions.length === 0}
+          title="把最新保存的脚本转成 SRT 字幕（服务端按句切分，不调用模型）"
+          onClick={() => void exportSubtitle()}
+        >
+          导出 SRT 字幕
+        </button>
       </div>
+
+      {subtitlePreview !== null && (
+        <div className="panel notice-panel">
+          <div className="row">
+            <span className="panel-title">字幕预览 · {subtitlePreview.path}</span>
+            <span className="spacer" />
+            <button className="btn sm ghost" onClick={() => setSubtitlePreview(null)}>
+              收起
+            </button>
+          </div>
+          <pre className="output preview-text">{subtitlePreview.content}</pre>
+        </div>
+      )}
 
       {error !== null && <div className="panel error-panel">{error}</div>}
 
@@ -274,8 +320,31 @@ export function ScriptPage(): React.ReactElement {
               </div>
             </>
           )}
+          {subtitles.length > 0 && (
+            <>
+              <div className="rail-title">已导出字幕</div>
+              <ol className="version-list">
+                {subtitles.map((artifact) => (
+                  <li key={artifact.id}>
+                    <button
+                      className="link-btn"
+                      onClick={() => {
+                        void api.getArtifact(artifact.id).then((result) => {
+                          setSubtitlePreview({ path: result.artifact.path, content: result.content });
+                        });
+                      }}
+                    >
+                      {artifact.path.split('/').pop()}
+                    </button>
+                    <span className="hint">{new Date(artifact.createdAt).toLocaleTimeString('zh-CN')}</span>
+                  </li>
+                ))}
+              </ol>
+            </>
+          )}
         </aside>
       </div>
+      <ToastStack toasts={toasts} onDismiss={dismiss} />
     </AppShell>
   );
 }

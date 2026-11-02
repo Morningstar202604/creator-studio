@@ -147,8 +147,10 @@ describe('daemon HTTP surface', () => {
     const { body } = await api('/v1/tools');
     expect(body.tools.map((tool: { name: string }) => tool.name).sort()).toEqual([
       'fs.delete',
+      'fs.list',
       'fs.read',
       'fs.write',
+      'http.fetch',
     ]);
   });
 

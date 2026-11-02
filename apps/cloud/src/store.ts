@@ -78,6 +78,49 @@ export type SecurityEvent = {
 };
 
 /**
+ * Persistence contract shared by the in-memory and Postgres implementations.
+ *
+ * Every scoped accessor takes the caller's `userId`. A foreign id must behave
+ * exactly like a missing one (null / empty) so the HTTP layer cannot leak the
+ * existence of another tenant's rows.
+ */
+/** Implementations may be synchronous (memory) or async (Postgres). */
+export type Awaitable<T> = T | Promise<T>;
+
+export interface CloudStore {
+  createDevice(input: {
+    userId: string;
+    name: string;
+    os: DeviceRecord['os'];
+    capabilities: string[];
+  }): Awaitable<{ device: DeviceRecord; token: string }>;
+  devicesOf(userId: string): Awaitable<DeviceRecord[]>;
+  deviceFor(userId: string, deviceId: string): Awaitable<DeviceRecord | null>;
+  runsOf(userId: string): Awaitable<CloudRun[]>;
+  runFor(userId: string, runId: string): Awaitable<CloudRun | null>;
+  updateRun(userId: string, runId: string, patch: { status?: CloudRun['status']; error?: string }): Awaitable<CloudRun | null>;
+  billingOf(userId: string): Awaitable<BillingEntry[]>;
+  findByToken(token: string): Awaitable<DeviceRecord | null>;
+  createPairingCode(userId: string, deviceId: string, ttlMs?: number): Awaitable<PairingCode>;
+  consumePairingCode(code: string): Awaitable<PairingCode | null>;
+  touchDevice(deviceId: string): Awaitable<void>;
+  revokeDevice(deviceId: string): Awaitable<void>;
+  rotateDevice(deviceId: string): Awaitable<string | null>;
+  setPlan(userId: string, plan: keyof typeof PLANS): Awaitable<void>;
+  planOf(userId: string): Awaitable<Plan>;
+  recordRun(run: CloudRun): Awaitable<CloudRun>;
+  runsThisMonth(userId: string): Awaitable<number>;
+  charge(entry: Omit<BillingEntry, 'id' | 'createdAt'>): Awaitable<BillingEntry>;
+  usage(userId: string): Awaitable<{ runs: number; costCny: number; plan: Plan }>;
+  /** Aggregate only; used by the unauthenticated health route. */
+  runsCount(): Awaitable<number>;
+  /** Aggregate only; number of distinct tenants, never their ids. */
+  tenantCount(): Awaitable<number>;
+  securityEventsOf(userId: string): Awaitable<SecurityEvent[]>;
+  close(): Awaitable<void>;
+}
+
+/**
  * In-memory store used when no PostgreSQL is configured. The interface mirrors the
  * Postgres-backed implementation so swapping it in needs no call-site changes.
  *
@@ -86,7 +129,7 @@ export type SecurityEvent = {
  * security event instead of leaking existence. Postgres deployments should mirror
  * these helpers with `WHERE user_id = $1` predicates (and RLS as a second layer).
  */
-export class MemoryStore {
+export class MemoryStore implements CloudStore {
   readonly devices = new Map<string, DeviceRecord>();
   readonly pairing = new Map<string, PairingCode>();
   readonly runs = new Map<string, CloudRun>();
@@ -274,5 +317,21 @@ export class MemoryStore {
       costCny: Number(entries.reduce((sum, entry) => sum + entry.costCny, 0).toFixed(4)),
       plan: this.planOf(userId),
     };
+  }
+
+  runsCount(): number {
+    return this.runs.size;
+  }
+
+  tenantCount(): number {
+    return new Set([...this.devices.values()].map((device) => device.userId)).size;
+  }
+
+  securityEventsOf(userId: string): SecurityEvent[] {
+    return this.securityEvents.filter((event) => event.actorUserId === userId);
+  }
+
+  async close(): Promise<void> {
+    // Nothing to release; the memory store has no external handle.
   }
 }

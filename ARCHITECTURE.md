@@ -2,7 +2,11 @@
 
 > 本文档是本项目的唯一真理源（Single Source of Truth）。
 > 任何影响架构、接口、数据模型、依赖或目录结构的代码变更，都必须同步更新本文档。
-> 最后更新：2026-10-24 ｜ 文档版本：v0.3（记忆检索 + 多租户隔离）
+> 最后更新：2026-11-02 ｜ 文档版本：v0.17（质量门禁与运行时可靠性）
+
+当前版本的实际状态、已验证项与已知缺陷见 [`docs/STATUS.md`](docs/STATUS.md)；
+验证方法与实测记录见 [`docs/VERIFICATION.md`](docs/VERIFICATION.md)；
+版本迭代计划见 [`docs/ROADMAP.md`](docs/ROADMAP.md)。
 
 ## 1. 概述与目标
 
@@ -258,6 +262,18 @@ type Project = {
   createdAt: string;       // ISO 8601
   updatedAt: string;
   deletedAt: string | null;
+};
+
+type StyleProfile = {
+  id: string;
+  userId: string;
+  name: string;            // ≤60
+  tone: string;            // ≤400
+  audience: string;        // ≤200
+  bannedWords: string[];   // ≤40，每项 ≤20
+  notes: string;           // ≤600
+  createdAt: string;
+  updatedAt: string;
 };
 
 type Run = {
@@ -689,6 +705,549 @@ v0.1 的 T1–T21 覆盖了「一条链路的骨架」。v0.2 补齐的是**可�
 9 个包 386 测试；`security-audit` 139 文件 5 类 PASS；对比度全过；Tauri 安装包 11.93 MiB；
 真实模型（本机 OpenAI 兼容网关，glm-5.3-flash / deepseek-v4.1-flash）6 阶段全通。
 
+## 9.15 v0.16 增量：细节与打包（2026-10-28）
+
+### 9.15.1 截图审出来的六处细节
+
+| 症状 | 根因 | 修法 |
+|---|---|---|
+| 项目卡写「0% 完成」，实际已有 5 个产物 | 百分比 = 当前阶段序号 / 阶段总数 − 1 | 改为「阶段 4/6」，进度条同步 |
+| 阶段筛选 chip 撑成三行 | 六个包合计约 20 个阶段，`flex-wrap: wrap` | 单行横向滚动，工具栏高度固定 |
+| 模型 chip 把「（缺密钥）」截掉一半 | `max-width` 作用在整个药丸上 | 药丸完整，内部 `.chip-label` 省略 |
+| 深色下四类进度条消失 | `--track` 接近深色卡片底色 | 统一改 `--border` |
+| 时间轴底部章节名贴边被裁 | 画布未留内边距 | 18px padding |
+| 资料库「5 个产物 · 跨 6 个项目」自相矛盾 | 前者是筛选结果，后者是全局 | 文案区分「当前筛选」与「库内共」 |
+
+### 9.15.2 ECharts 按需组装
+
+全量 `echarts` 入口 1,090 KB（gzip 370 KB），而项目只画折线、柱状、网格、tooltip、图例。
+`apps/desktop/src/lib/echarts.ts` 用 `echarts/core` 注册：
+
+```ts
+echarts.use([LineChart, BarChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer]);
+```
+
+运行时降到 **547 KB**（gzip 185 KB），仍由 `Chart` 动态 import，只有复盘页加载。
+`EChartsOption` 继续从 `echarts` 以 `import type` 取，编译期擦除。
+
+### 9.15.3 v0.16 验证
+
+- `pnpm verify`：9 个包 **636 passed + 9 skipped**；security-audit 200 files PASS；对比度 PASS
+- 六场景造数，20 页 × 2 宽度 × 2 主题截图：0 console error、0 横向溢出
+- 打包：`index 539 KB` / `echarts 547 KB`（动态）/ `cytoscape 433 KB`（动态）
+- 截图：`70-projects-polished` / `71-timeline-padded` / `72-library-counts`（各含 `-dark`）
+
+## 9.14 v0.15 增量：交互巡检（2026-10-27）
+
+### 9.14.1 为什么截图不够
+
+截图证明「页面画出来了」，不证明「点下去不出事」。这一轮把每个路由上的每个可用控件
+都点一遍：728 次点击覆盖 4 个项目 × 全部场景阶段 + 5 个跨项目页，每次点击前强制重新加载文档，
+避免单页应用的状态掩盖问题。
+
+### 9.14.2 巡检脚本
+
+`scripts/click-sweep.py` 从 `/v1/projects` 与 `/v1/scenarios` 推导路由，因此新增场景包不用改脚本。
+每个控件执行：刷新 → 点击 → 检查崩溃边界 / `页面不存在` / 弹窗是否卡死 / 未预期的 HTTP 错误码。
+错误码白名单只包含「无密钥安装下预期会出现的业务错误」（`MODEL_AUTH`、`NO_METRICS` 等），
+其余一律算发现。第二遍处理键盘：Tab 是否落在可见元素、Escape、Ctrl+K 开关。
+退出码非 0 可直接作为 CI 门禁。
+
+### 9.14.3 本轮发现
+
+| 症状 | 根因 | 修法 |
+|---|---|---|
+| 写作台「新建」必 400 | 只发 `number`，漏了包里必填的 `title` 字段 | 按 `entityType.titleField` 补字段；加回归测试 |
+| 空项目写作台显示空图表骨架 | 0 章仍渲染篇幅区与图例 | 无章节时不画，右栏改为「先新建一章」 |
+
+### 9.14.4 v0.15 验证
+
+- `pnpm verify`：9 个包 **634 passed + 9 skipped**；security-audit 198 files PASS；对比度 PASS
+- `click-sweep.py` 728 次点击 0 findings；键盘 12 页 Tab 全部可见、Ctrl+K 正常
+- 压力：30 次连续跳转 / 3 轮明暗切换 / 三档宽度 / 快速输入切章 / 全部抽屉开关，0 error 0 溢出
+- 健壮性：空项目 7 页 + 8 个畸形深链 + 损坏 localStorage，均可读空态无白屏
+
+## 9.13 v0.14 增量：可视化的一致性与可读性（2026-10-27）
+
+### 9.13.1 canvas 读不到 CSS 变量
+
+ECharts 与 Cytoscape 都绘制到 canvas，`var(--fg)` 这类自定义属性对它们不可见。此前这两个库的
+颜色全部硬编码为浅色值，浅色主题正常，深色主题下图表等于空白（深灰字画在深灰卡片上）。
+`apps/desktop/src/lib/canvasTheme.ts` 从 `getComputedStyle` 读 token 得到一份具体色值，
+并用 `MutationObserver` 监听 `documentElement[data-theme]`，主题切换后重新取色并重绘。
+
+### 9.13.2 三个可视化问题
+
+| 症状 | 根因 | 修法 |
+|---|---|---|
+| 深色图表空白 | 颜色硬编码 | `chartPalette(theme)` 提供两套序列色 + 轴/网格/图例色，option 构造函数接收调色板 |
+| 关系图下半屏空白 | `fit()` 把整图缩进固定 620px 画布，孤立卡把布局拉高 | 画布高度按内容计算（360–620），只做横向缩放；孤立卡默认隐藏并提供开关 |
+| 时间轴跨度条看不出问题 | `gapChapters === null` 按 0 渲染 | 改为虚线占位，文案补「跨度 N 章」 |
+
+### 9.13.3 写作台的进度表达
+
+| 元素 | 数据来源 | 说明 |
+|---|---|---|
+| 本章进度环 | 卡片 `word_target` 字段 | SVG 圆环，0 目标时不显示 |
+| 全书进度条 | 所有卡片 `word_target` 之和 | 没有目标字段的场景包自动省略 |
+| 章节篇幅柱 | 每章字数（CJK 字符 + 拉丁词） | 高度编码字数，颜色编码 `status` |
+| 章节栏圆点 | `status` select | 与柱子同一套 tone 映射 |
+
+所有字段名都来自场景包的 `fields` 声明，没有写死 `word_target` 就一定存在。
+
+### 9.13.4 v0.14 验证
+
+- `pnpm verify`：9 个包 **631 passed + 9 skipped**；security-audit 197 files PASS；对比度 PASS
+- 浅色/深色各 12 页截图复核：0 console error、0 横向溢出；深色图表文字可读
+- 截图：`64`–`67`（各含浅色与 `-dark`）
+
+## 9.12 v0.13 增量：视图驱动的路由与场景一致性（2026-10-27）
+
+### 9.12.1 问题
+
+v0.9–v0.12 把「场景是数据」落到了存储和检查表，但前端路由与几处后端推进仍按视频的键名写死。
+实机复现的四个症状：小说项目点「设定」得到「页面不存在」；「继续当前阶段」把用户送到角色卡；
+章节产物进不了记忆索引；复盘后项目停在 `review`，而小说包只有 `revision`。
+共同点不是某个页面写错，而是**用 key 当身份**。
+
+### 9.12.2 路由
+
+| 项 | 做法 |
+|---|---|
+| 单一入口 | `stageHref(projectId, stage)`：文档视图 → 写作台；卡片/看板 → 卡片页；发布/复盘 → 各自页面；视频五个键保留专属 URL；其余 generate 阶段 → `/stage/:stageKey` |
+| 通用阶段页 | 同一组件按包解析标签、hint、`promptHint` 与产物类型；不再是「一个场景一组页面」 |
+| 兜底 | 包里没有该阶段时给出「这个阶段不存在」并回到工作台，而不是空白页 |
+
+### 9.12.3 数据一致性
+
+| 症状 | 根因 | 修法 |
+|---|---|---|
+| 章节不进记忆 | 迁移 007 的 `kind` CHECK 只认视频产物，插入失败被 best-effort 吞掉 | 迁移 012 重建表放宽枚举，并重建随 `DROP TABLE` 一起消失的三个 FTS 触发器 |
+| 复盘停在不存在的阶段 | `advanceStage(id, 'review')` 写死 | 找包里产出 `review-report` 的阶段 |
+| 导出不推进 | 写死 `published` | 找 `view: publish` 的阶段 |
+| 发布页少算文件 | 前端白名单漏 `outline`/`chapter` | 与 `isExportableKind` 对齐 |
+
+### 9.12.4 包的校验更严
+
+`board.groupBy` 必须指向该卡片类型上真实存在的 select 字段；`document` 的 body/title/order 字段同理。
+写错的包在导入时被拒绝，而不是渲染成一列「未分组」或空编辑器。
+
+### 9.12.5 v0.13 验证
+
+- `pnpm verify`：9 个包 **628 passed + 9 skipped**；security-audit 195 files PASS；对比度 PASS
+- 新增 14 例：`apps/daemon/test/consistency.test.ts` 4、`packages/store-sqlite/test/memory-migration.test.ts` 5、
+  `apps/desktop/test/stage-route.test.tsx` 5
+- 真机：小说 `设定` → `/stage/premise`、继续当前阶段同页；短视频镜头看板三列；工作台「11 张卡片」；
+  命令面板「项目 · 设定」；资料库多出「大纲 / 章节」；0 console error、0 横向溢出
+- 截图：`60-novel-generate-stage` / `61-shorts-shot-board` / `62-workspace-novel-stages` / `63-palette-stage-labels`
+
+## 9.11 v0.12 增量：写作台、手稿导出与看板拖拽（2026-10-26）
+
+### 9.11.1 为什么是「视图」而不是新场景
+
+v0.11 之前，长篇小说的章节只有两种呈现：卡片板（`board`）和关系图。卡片板适合看进度，
+但写作本身需要一个安静的单栏编辑器。这不是「小说专有功能」：课程讲义、剧本场次、
+播客逐字稿都是「一堆有序长文本」，缺的是同一件事——一个把一个卡片类型投影成手稿的视图。
+
+因此新增第六种视图 `document`，它只声明三件事：哪个卡片类型、正文放在哪个字段
+（默认卡片 `body`）、按哪个字段排序。引擎仍然不知道「小说」是什么。
+
+### 9.11.2 组件
+
+| 项 | 做法 |
+|---|---|
+| 视图 | `STAGE_VIEWS` 增加 `document`；阶段可带 `document: { bodyField?, titleField?, orderField?, fileStem? }` |
+| 校验 | 包加载时校验 `document` 指向的卡片类型与字段确实存在，写错字段直接拒绝而不是渲染空编辑器 |
+| 写作台 | `/p/:id/write/:entityType`：章节栏 + 单栏编辑器 + 实时字数/段落 + 自动保存（900ms 防抖，切章立即落盘） |
+| 手稿投影 | `GET /manuscript` 与 `POST /manuscript/export`；排序依次取 `orderField`、卡片 `order`、创建顺序 |
+| Word 导出 | `docx@9.14.0` 生成 OOXML（标题页 + 每章分页 + 段落），与 Markdown 同时落到 `manuscript/` |
+| 下载 | `GET /manuscript/download/:name` 只接受 `^[a-z0-9][a-z0-9-]*\.(docx\|md)$`，不做通用静态服务 |
+| 看板拖拽 | `@dnd-kit/core` + `@dnd-kit/utilities`；拖动手柄是独立按钮，普通点击仍然打开卡片 |
+| 卡片顺序 | `PATCH /entities/:cardId` 接受 `order`（≥0 整数），与字段一起写入 |
+
+### 9.11.3 v0.12 验证
+
+- `pnpm verify`：9 个包 **612 passed + 9 skipped**；security-audit 191 files PASS；对比度 PASS
+- `apps/daemon/test/manuscript.test.ts` 6 例：乱序创建按序号导出、docx 内文字顺序、
+  空项目拒绝、无写作阶段拒绝、下载名白名单、`order` 持久化
+- `apps/desktop/test/writing.test.tsx` 5 例：章节栏与全书字数、自动保存、切章不串稿、导出、字数统计算法
+- `apps/desktop/test/kanban.test.tsx`：列与拖动手柄渲染
+- 真机 1440×900：输入后 2 秒状态变「已保存」，刷新后文字仍在；拖拽把第一章从「待写」移到
+  「定稿」并落库（列计数 0/2/1/6/0）；导出 docx 11,219 B，9 章标题在 OOXML 中单调递增；
+  0 console error、0 横向溢出
+- 截图：`56-writing-desk` / `57-chapter-board` / `58-workspace-writing` / `59-writing-desk-dark`
+
+### 9.11.4 已知边界
+
+- 正文是纯 Markdown，不支持批注、修订模式、目录域；导出后由 Word 负责排版
+- 自动保存以「整段正文覆盖」为单位，没有字符级合并；同一章节多端同时编辑会相互覆盖
+- 拖拽只改所在列与顺序，不改章节号；章节号仍是手填字段
+- Word 导出按空行切段，刻意不支持复杂版式（封面图、页眉页脚）
+
+## 9.10 v0.11 增量：叙事时间轴与伏笔健康（2026-10-26）
+
+### 9.10.1 为什么不是又一张关系图
+
+关系图的力导向布局回答「谁连谁」，但作者的问题是**顺序与闭合**：章节有没有按序推进、
+哪条伏笔埋了没收、哪条收得太晚。所以这一层不复用关系图的布局，而是用分层布局
+（dagre）把章节排成一条时间轴，伏笔作为跨越两个章节的边。
+
+### 9.10.2 组件
+
+| 项 | 做法 |
+|---|---|
+| 布局 | `cytoscape-dagre@4.0.1`，`rankDir: LR`；章节之间补一条「阅读顺序」链作为秩约束 |
+| 视口 | 画布宽度跟随内容，外层 `overflow-x: auto`；zoom 固定 1 保证文字可读 |
+| 跳转 | 章节序号按钮 → 原生 `scrollTo` + 目标节点居中 |
+| 分析 | `GET /v1/projects/:id/foreshadow-health` 计算埋设章/回收章/跨度，输出未回收与超长跨度两类问题 |
+| 视觉 | 实线=回收、虚线=埋设、红框虚线=未回收；章节卡为带序号的白色卡片，左侧色条区分类型 |
+
+### 9.10.3 v0.11 验证
+
+- `pnpm verify`：9 个包 **587 passed + 9 skipped**；security-audit 185 files PASS；对比度 PASS
+- `apps/desktop/test/timeline.test.tsx` 4 例：统计摘要、未回收清单与原因、跳转控件、工作台入口
+- 真机：9 章 / 5 条伏笔 / 3 条未回收；画布 2143px、视口 838px 可滚动；
+  跳转第 9 章后完整可见；0 console error、0 横向溢出
+- 截图：`54-timeline` / `55-timeline-chapter9`
+
+### 9.10.4 已知边界
+
+- 章节顺序依赖手填的「章节序号」；没填时按创建顺序，可能与阅读顺序不一致
+- 跨度为「回收章号 − 埋设章号」，按序号相减；分卷/插叙场景下这个数字意义有限
+- 时间轴只画伏笔线，不画角色出场；角色与章节的关系仍看关系图
+- 横向滚动在窄屏上依赖触摸板/滚轮，尚未提供缩略图导航
+
+## 9.9 v0.10 增量：关系图（2026-10-26）
+
+### 9.9.1 为什么换掉第一版
+
+第一版用 ECharts `graph`（零新增依赖）。截图暴露的问题：边标签渲染成 `undefined`、
+无图例、force 布局把节点挤成两团且标签互相压盖、无法「只看直接关系」、点击无反馈。
+这不是调参能解决的——ECharts 的 graph 是图表，不是图编辑器。
+
+改用 **Cytoscape 3.33.1**：专为网络图设计，自带 cose 布局、选择模型、逐元素样式、
+缩放平移。动态 `import()` 加载，不进主包。
+
+### 9.9.2 实现要点
+
+| 项 | 做法 |
+|---|---|
+| 数据 | `GET /v1/projects/:id/graph` 一次返回 `nodes` + `edges` + `entityTypes` + `relationTypes`，避免 N+1 |
+| 布局 | `cose` + `nodeDimensionsIncludeLabels: true` + `nodeRepulsion 42000` + `idealEdgeLength 165` |
+| 边标签 | 默认隐藏（密集时会互相压盖），只在该边被高亮时显示；文字不旋转 |
+| 选中 | 点击节点：其余元素 `dimmed`，直接边高亮并显示标签；点空白恢复 |
+| 侧栏 | 选中后显示卡片字段（用场景包的字段标签而非 key）、关系列表（含反向词）、更新时间、跳卡片板 |
+| 筛选 | 按卡片类型开关；搜索按标题/标签/字段值过滤 |
+| 可测试性 | 把节点屏幕坐标发布到容器元素的 `__nodePositions`，canvas 图也能被自动化点击 |
+
+### 9.9.3 v0.10 验证
+
+- `pnpm verify`：9 个包 **583 passed + 9 skipped**；security-audit 183 files PASS；对比度 PASS
+- `apps/desktop/test/graph.test.tsx` 4 例：节点/边计数与图例、关系类型正反向、类型筛选、工作台入口
+- 真机 1440×900 DPR2：16 张卡 / 15 条关系；点击「第一章 雾从海上来」→ 其余淡出、
+  三条关系高亮、侧栏列出 3 条；0 console error、0 横向溢出
+- `52-graph-overview.png` / `53-graph-selected.png`
+
+### 9.9.4 已知边界
+
+- 布局是静态的一次性计算，节点多（>200）时会拥挤；届时需要换增量布局或分层布局
+- 不支持手工拖拽后保存位置
+- 边标签默认隐藏，只在高亮时显示；没有提供「全部显示」开关
+- 图不区分关系方向的两端语义，只用一个箭头表达
+
+## 9.8 v0.9 增量：场景扩展架构（2026-10-26）
+
+### 9.8.1 三层边界
+
+| 层 | 是什么 | 谁能改 |
+|---|---|---|
+| **引擎** | 阶段推进、生成流水线、检查表、实体/关系存储、预算与审计 | 只能改代码 |
+| **视图** | `generate` / `entities` / `publish` / `review` / `board`（v0.12 起加 `document`）六种固定界面 | 只能改代码（闭集） |
+| **场景包** | 阶段序列、每阶段用哪个视图、产出哪些产物、卡片字段、关系类型、阶段提示词 | 用户可写，纯 JSON |
+
+扩展一个新场景**不需要写代码**，只需要组合上面这些视图；需要新交互时才先做一个视图，
+再让场景包引用它。这条规则保证「装一个包」不会引入可执行代码。
+
+### 9.8.2 能力协商
+
+- 包声明 `formatVersion`（当前 2）与 `requiresViews`。
+- 导入时把 `requiresViews` 与实际视图闭集对照；缺视图 → 400 `UNSUPPORTED_VIEW`，
+  附 `supportedViews`，**不写任何行**。
+- 视图名本身在 zod 里是 enum，未知视图连解析都过不去——双重防线。
+- `GET /v1/scenarios` 与 `/export` 都带上 `engine: { packFormat, views }`，
+  客户端可以据此判断「这份包我能不能读」。
+
+### 9.8.3 继承与分发
+
+| 能力 | 说明 |
+|---|---|
+| `inherits` | 读取时合并父包的阶段/卡片类型/关系类型；子包同名阶段覆盖；深度上限 4；循环拒绝 |
+| 导出 | `GET /v1/scenarios/:id/export` 导出存储原样 + 引擎元信息 |
+| 导入 | `POST /v1/scenarios/import`；校验 → 协商 → 继承解析 → 落盘，任一步失败都不留痕 |
+
+### 9.8.4 内置场景清单（全部为数据）
+
+| id | 场景 | 阶段数 | 卡片类型 | 关系类型 |
+|---|---|---:|---:|---:|
+| `video` | 中长视频 | 7 | 0 | 0 |
+| `novel` | 长篇小说 | 6 | 4 | 4 |
+| `podcast` | 播客 | 6 | 2 | 0 |
+| `course` | 课程 | 6 | 2 | 0 |
+| `copywriting` | 文案 / 图文 | 6 | 2 | 0 |
+| `shorts` | 短视频 | 5 | 1 | 0 |
+
+### 9.8.5 看板与关系类型
+
+- `view: board` + `board.groupBy` 指向该卡片类型的一个 select 字段；列顺序取 `board.order`，
+  空值进「未分组」。看板阶段在检查表里按卡片计数。
+- `relationTypes` 声明 `key / label / inverse / fromTypes / toTypes`。写入时校验端点类型，
+  读取反向时用 `inverse` 作为标签，正向存 `label`。未声明类型的包保持自由文本。
+
+### 9.8.6 v0.9 验证
+
+- `pnpm verify`：9 个包 **579 passed + 9 skipped**；security-audit 181 files PASS；对比度 PASS
+- `packages/protocol/test/extension.test.ts` 18 例：内置包只用已支持视图、未知视图被 schema 拒绝、
+  旧引擎遇新包时协商报缺、`generate` 隐式默认被收集、包格式版本、继承合并/覆盖/缺父/循环/深度、
+  关系类型与反向标签、看板 `groupBy` 配置、两个新包的结构
+- `apps/daemon/test/extension.test.ts` 11 例：`/v1/scenarios` 广播视图清单、导出导入往返、
+  未知视图 400 + `supportedViews`、孤儿继承、循环、类型化关系正反向标签、未声明类型拒绝、
+  端点不匹配拒绝、无声明包的自由文本兼容
+- 真机：章节看板 5 列（含「未分组」），关系正向「出现在/埋于」、反向「出场于/埋有伏笔」
+- 三张新截图：`49-chapter-board` / `50-typed-links` / `51-chapter-board-drawer`
+
+### 9.8.7 已知边界
+
+- 视图是闭集：真正新的交互（时间线、关系图、分屏对照）仍然要先写代码。
+- 包没有迁移器：改内置包的字段键会让已有卡片读不到旧值。
+- 没有签名与来源校验：导入的包来自谁、是否被改过，目前无法验证。
+- 没有远程市场与自动更新：分发靠导出 JSON 手动传递。
+
+## 9.7 v0.8 增量：卡片关联与交互打磨（2026-10-26）
+
+### 9.7.1 卡片关联
+
+| 组件 | 说明 |
+|---|---|
+| 迁移 010 | `entity_relations`：`from_card_id` / `to_card_id` / `label`，`UNIQUE(from,to,label)`，`CHECK(from <> to)` |
+| 存储 | `linkCards` 校验两端同项目、不同卡；反向引用由 `listBacklinks` 派生，不重复存储 |
+| API | `GET/POST /v1/projects/:id/entities/:cardId/links`、`DELETE /v1/projects/:id/links/:relationId` |
+| 级联 | 删除卡片由外键 `ON DELETE CASCADE` 一并清除相关边 |
+| 语义 | 有向边，读取只做一层展开，不做递归遍历——避免未来图视图里出现环 |
+
+### 9.7.2 交互层
+
+| 问题 | 改法 |
+|---|---|
+| 内联表单把看板顶出视口 | 改为右侧抽屉，`role=dialog` + `aria-modal`，打开聚焦首字段，Tab 在抽屉内循环，Escape 关闭 |
+| 删除无确认 | `ConfirmDialog`，默认聚焦「取消」，Escape 等同取消 |
+| 结果提示常驻不消失 | `useToasts` + `role=status`，成功 3.2s、错误 6.4s；校验错误同时保留内联面板 |
+| 固定定位被 `.shell` 裁剪 | Drawer / ConfirmDialog / Toast 通过 `createPortal` 挂到 `body` |
+| 卡片多时找不到 | 看板按标题、标签、任意字段值过滤 |
+| 空态只有一句话 | 空态补主操作按钮 |
+
+### 9.7.3 v0.8 验证
+
+- `pnpm verify`：9 个包 **560 passed + 9 skipped**；security-audit 178 files PASS；对比度 PASS
+- `apps/daemon/test/relations.test.ts` 5 例：正反向、自指拒绝、跨项目拒绝、解除、级联删除
+- `apps/desktop/test/ux.test.tsx` 6 例：抽屉焦点与 Escape、删除取消/确认、toast、内联错误、搜索、关联
+- 真机：焦点落在「卡片标题」，连续输入「回收于」完整、Escape 关闭、删除确认可取消，0 console error
+- 三张新截图：`45-card-drawer` / `46-delete-confirm` / `48-toast`
+
+### 9.7.4 已知边界
+
+- 关联没有类型系统（label 是自由文本），无法按「出现在」自动生成反向语义
+- 没有关系图视图；卡片详情只列一层关联
+- 编辑抽屉不记录草稿，误关会丢未保存内容
+
+## 9.6 v0.7 增量：场景包与通用卡片（2026-10-26）
+
+### 9.6.1 为什么要做这一层
+
+v0.6 之前，「一个项目是什么」是写死的：`ProjectStageSchema` 是七个视频阶段的 enum，
+检查表是七条固定产物，界面按 `STAGES` 常量渲染。一个小说项目会被要求交分镜表和 SRT。
+这不是配置问题，而是**领域假设被编进了 schema**。
+
+v0.7 把这一层抽成数据：**场景包（ScenarioPack）声明阶段、视图、产物与卡片类型**，
+引擎只认「阶段 + 视图 + 卡片」，不认「视频」或「小说」。
+
+### 9.6.2 数据模型
+
+| 表 | 作用 |
+|---|---|
+| `scenario_packs` | 包的 JSON 载荷 + `builtin` 标记；内置四套随启动从代码刷新，用户包不动 |
+| `entities` | 所有卡片一张表：`project_id` + `type` + `fields`(JSON) + `body` + `tags` + `sort_order` |
+| `projects.scenario_id` | 项目所属包；缺省 `video`，保证老数据可用 |
+
+卡片字段校验不是数据库约束，而是**按包声明的 schema 校验**（必填、未知字段、select 必须有选项、
+单卡载荷上限 8KB）。这样换场景不用改表。
+
+### 9.6.3 视图复用
+
+阶段只允许引用五种已有视图，场景包不能引入新代码：
+
+| view | 落点 | 用途 |
+|---|---|---|
+| `generate` | 现有阶段页 | 调模型产出结构化内容（含阶段级 `promptHint`） |
+| `entities` | 新增卡片板 | 渲染该阶段 `entityType` 的卡片 |
+| `publish` | 发布页 | 检查表 + 导出 |
+| `review` | 复盘页 | 指标回填与归因 |
+| `board` | 保留 | 预留的纯看板形态 |
+
+### 9.6.4 检查表与阶段
+
+- 检查表按包的 `required` 阶段生成，条目 key 为 `<stage>:<artifactKind>`。
+- `view=entities` 的阶段数卡片而不是数产物（小说章节、课程课时）。
+- 阶段推进取「本项目包里第一个产出该 kind 的阶段」，不再用全局映射表。
+- 写入阶段时按包校验，未知阶段返回 400 `UNKNOWN_STAGE` + `available`。
+
+### 9.6.5 v0.7 验证
+
+- `pnpm verify`：9 个包 **518 passed + 9 skipped**；security-audit 172 files PASS；对比度 PASS
+- `packages/protocol/test/scenario.test.ts` 15 例：四套内置包结构、video 阶段键与旧版逐字一致、
+  包校验（重复键、无 required、titleField 未声明、select 无选项）、卡片字段校验与载荷上限
+- `packages/store-sqlite/test/entity-store.test.ts` 11 例：种子幂等、内置包刷新但不覆盖用户包、
+  内置只读、卡片顺序/作用域/更新删除、迁移后老项目默认 video
+- `apps/daemon/test/scenario.test.ts` 16 例：场景 CRUD、项目按场景创建、阶段校验、
+  场景感知检查表、卡片 CRUD、自定义包可用
+- `apps/desktop/test/scenario.test.tsx` 4 例：阶段栏随包渲染、卡片板切换、按 schema 生成表单、创建时传场景
+- 真机：小说项目阶段栏 6 项且无「分镜」；四类卡片共 9 张；章节检查表在卡片存在后转绿
+- Playwright 1440×900 六张新截图：`39-novel-workspace` / `40-novel-characters` / `41-novel-chapters`
+  / `42-novel-foreshadow` / `43-scenario-picker` / `44-novel-dark`，0 console error、0 横向溢出
+
+### 9.6.6 已知边界
+
+- 场景包只能组合现有视图，**不能声明新的渲染逻辑**；真正新的交互（例如时间线、关系图）
+  仍需先做一个视图，再被包引用。
+- 卡片之间没有关系字段（角色→章节、伏笔→章节只是文本引用），关系图与双向链接待做。
+- 包没有版本号与迁移机制：改一个内置包的字段键会让已有卡片读不到旧值。
+
+## 9.5 v0.6 增量：Postgres 云端、自动更新与三平台 CI（2026-10-26）
+
+### 9.5.1 CloudStore 抽象与 Postgres 实现
+
+| 组件 | 说明 |
+|---|---|
+| `apps/cloud/src/store.ts` | `CloudStore` 接口取代具体类；所有方法返回 `Awaitable<T>`，内存实现同步、Postgres 实现异步 |
+| `apps/cloud/src/store-postgres.ts` | `pg` 连接池；六张表（devices / pairing_codes / runs / billing / plans / security_events）；首次连接惰性建表 |
+| 租户隔离 | 每条查询带 `user_id` 谓词；外租户 id 与不存在等价（null / 空数组），并写 `cloud_security_events` |
+| 配对码 | `UPDATE ... WHERE used_at IS NULL AND expires_at >= now RETURNING *` 单语句消费，天然防并发重复兑换 |
+| 启动 | `DATABASE_URL` 或 `--database` 存在即用 Postgres，否则内存；`close()` 会 `pool.end()` |
+
+### 9.5.2 自动更新
+
+- `tauri-plugin-updater` 注册进 `lib.rs`；`tauri.conf.json` 配 `plugins.updater.pubkey` 与 endpoint。
+- `bundle.createUpdaterArtifacts: true`，构建产出 `.sig`；私钥仅经 `TAURI_SIGNING_PRIVATE_KEY` 注入，不入库。
+- 验证方式：Ed25519 公钥对安装包的 BLAKE2b-512 摘要验签（`cryptography` 库），并比对 keyid。
+
+### 9.5.3 CI 三平台矩阵
+
+| job | 矩阵 | 产物 |
+|---|---|---|
+| verify | ubuntu / windows / macos | —（build + typecheck + test + audits） |
+| desktop | ubuntu / windows / macos | `.deb` / `.exe` / `.dmg`，各自上传 artifact |
+
+Linux 段装 `libwebkit2gtk-4.1-dev` 等 Tauri 依赖；签名密钥走 GitHub secrets。
+
+### 9.5.4 v0.6 验证
+
+- `pnpm verify`：9 个包 **501 passed + 9 skipped**；设 `CLOUD_TEST_DATABASE_URL` 后 **510 passed**
+- `apps/cloud/test/postgres.test.ts` 9 例：令牌认证、跨租户读/写拒绝、Run 作用域、配对码一次性与过期、令牌轮换、套餐与计费隔离、聚合不含租户 id
+- 真实 PostgreSQL 16.4 + HTTP 端到端 6 项：配对 → `/v1/me` → 建 Run → 列表 → usage → health
+- Tauri 签名安装包 13.01 MiB + `.sig`，Ed25519 验签 PASS
+- `apps/desktop/test/updater-config.test.ts` 7 例：插件依赖/注册/公钥/endpoint、updater artifacts、版本一致性、私钥未入库、CI 矩阵三平台与签名 secret
+
+### 9.5.5 仍然未验证
+
+- CI 工作流**未在 GitHub Actions 真实运行**（本机无法触发远端 runner）；只做了 YAML 解析与内容断言。
+- macOS / Linux 原生包**未本机构建**；Linux 交叉编译因缺 `x86_64-linux-musl-gcc` 失败。
+- 自动更新的**端到端升级**未验证（需要一次真实发布）。
+- Windows 安装包无 EV 代码签名，SmartScreen 仍会提示。
+
+## 9.4 v0.5 增量：信任修复与资料溯源（2026-10-26）
+
+### 9.4.1 界面渲染与发布一致性
+
+| 项 | 变更 |
+|---|---|
+| 阶段页 Markdown | `apps/desktop/src/pages/StagePage.tsx` 用 `Markdown` 组件替换 `<pre>`，复用 `components/Markdown.tsx` 的 DOMPurify 消毒；选题卡、资料、分镜、包装四页统一 |
+| 发布页清单 | `PublishPage.tsx` 白名单补 `subtitle`；计数文案改为「N 个产物 + README + manifest，共 N+2 个文件」，与实际 zip entries 一致 |
+| 导出策略 | `POST /v1/projects/:id/publish` 默认每类只导出最新版，`{ includeHistory: true }` 才打包全部版本；响应新增 `includeHistory` 与 `stage` |
+| 阶段推进 | 导出成功后 `advanceStageIfBehind(id, 'published')`，七段流水线第 6 段不再永远灰着 |
+| manifest 版本 | 移除硬编码 `'0.2.0'`，改为启动时读取 `apps/daemon/package.json` 的 `DAEMON_VERSION` |
+
+### 9.4.2 恢复入口与筛选
+
+- `SqliteProjectStore.listWithDeleted(includeDeleted)`；`GET /v1/projects?includeDeleted=1` 之前解析了参数却没用，现在真的返回软删项目。
+- 项目页新增「已删除」开关与恢复按钮，调用 `POST /v1/projects/:id/restore`。
+- 资料库类型筛选补 `subtitle`。
+
+### 9.4.3 Agent 与 API 收敛
+
+- 补齐 `scout` / `researcher` / `director` / `packager` 四个 AgentSpec（含工具白名单），创建 Run 时对照已注册 agents 校验，未知 id 直接 400 `UNKNOWN_AGENT`（附 `available` 列表）。
+- `/v1/projects/:id/generate` 对 `review-report` 返回 400 `USE_REVIEW_ENDPOINT`：复盘报告只能走 `/review`，确保带指标与阶段推进。
+
+### 9.4.4 资料溯源（`packages/tools/src/http.ts` + `apps/daemon/src/research.ts`）
+
+| 组件 | 说明 |
+|---|---|
+| `fetchPage` | 只允许 http(s)；拒绝 URL 内嵌凭据、localhost/.local、以及 loopback/RFC1918/link-local/ULA/multicast 字面量与解析结果；每一跳重定向都重新校验；默认 10s 超时、2MB 上限、最多 3 跳；内容类型白名单；`robots.txt` Disallow 即拒绝 |
+| `htmlToText` | 去掉 script/style/noscript/注释，按块级标签换行，解码实体，压缩空白 |
+| `gatherSources` | 最多 5 个来源，逐个抓取；成功进入 fenced 提示块并记录 `sha256`、字节、抓取时间；失败进入 `failures` 而不是静默忽略 |
+| `verifyNotes` | 规范化（NFKC + 去空白/标点 + 小写）后在抓取原文里找 claim/note；找不到的把 confidence 降为 `low` 并写明原因，`quoteVerified=false` |
+| 产物 | 事实要点每条带「✓ 原文可核 / ⚠ 未在原文找到」，末尾追加「抓取记录」表（来源、标题、时间、字节、sha256 前 12 位）与失败清单 |
+| 新工具 | `fs.list`（单层目录、上限 200/500）、`http.fetch`（走同一套守卫），注册进 ToolHost，沿用 grant/audit/timeout |
+| 失败语义 | 所有来源都抓不到时返回 502 `SOURCES_UNREACHABLE` + `failures`，**不调用模型** |
+
+### 9.4.5 v0.5 验证
+
+- `pnpm verify`：9 个包 494 passed；security-audit 160 files PASS；对比度 PASS
+- `packages/tools/test/http-fetch.test.ts` 17 例（私网判定、scheme/凭据、重定向重校验、超时预算、截断、robots、HTML 抽取）
+- `packages/tools/test/list.test.ts` 4 例（沙箱、根目录、上限）
+- `apps/daemon/test/v05.test.ts` 13 例（工具注册、Agent 校验、最新版导出与阶段推进、manifest 版本、真抓取与降级、全失败不调模型）
+- `apps/desktop/test/stage-render.test.tsx` 3 例（表格渲染 + XSS 消毒、资料页传参考链接、已删除恢复）
+- 真机 daemon + 假模型端点端到端：抓 `https://example.com/` 成功、编造条目降级、字幕入 zip、旧脚本不导出、未知 agent 400、软删可列举
+- Playwright 1440×900：资料页/分镜页/发布页/项目页/资料库 5 张新截图，0 console error、0 横向溢出
+
+## 9.3 v0.4 增量：风格、字幕与复盘闭环（2026-10-26）
+
+### 9.3.1 风格档案
+
+| 组件 | 说明 |
+|---|---|
+| `packages/protocol/src/style.ts` | `StyleProfileSchema`（name ≤60、tone ≤400、audience ≤200、bannedWords ≤40、notes ≤600）与 `lintBannedWords`（大小写不敏感、逐次计数） |
+| `packages/store-sqlite/src/style-store.ts` | 用户作用域 CRUD；`delete` 在同一事务里先 `UPDATE projects SET style_profile_id = NULL` 再删行 |
+| 迁移 008 | `style_profiles` 表 + `idx_style_profiles_user` + `idx_projects_style` |
+| `apps/daemon/src/generate.ts` | `renderStylePrompt` 生成「作者风格偏好」块，硬上限 1800 字，明确写「不得覆盖上面的输出契约」 |
+| `apps/daemon/src/pipeline.ts` | `GenerateInput.style` 可选；在有 memory / upstream 之前插入，system 消息仍是第一条 |
+| 检查表 | `buildChecklist(artifacts, { style })` 追加 `style` 项（`required: false`）；扫描范围是最新脚本 + 最新发布包，命中禁用词或尚无产物可查时 `ok: false`，但不影响 `ready` |
+
+设计取舍：风格是用户自述，不按不可信内容围栏处理（它不是第三方抓取物），但仍用「偏好 vs 契约」的措辞与长度上限降低提示注入面；测试断言 system 提示仍在首位。
+
+### 9.3.2 SRT 字幕
+
+| 组件 | 说明 |
+|---|---|
+| `apps/daemon/src/subtitle.ts` | 去掉标题/引用/表格/代码块 → 按 `。！？；` 切句 → 再按 `，、：` 分包到 18 字；时长按 4.5 字/秒，夹在 1–8 秒；`formatTimestamp` 输出 `HH:MM:SS,mmm` |
+| `POST /v1/projects/:id/subtitle` | 支持 `scriptArtifactId` 指定历史版本（跨项目/非脚本一律 400）；无脚本 409 `NO_SCRIPT`，无可口播文本 422 `EMPTY_SUBTITLE` |
+| 产物 | `subtitle/subtitle.vN.srt`，mime `application/x-subrip`；`isExportableKind` 收录，发布 zip 自动带上；`indexArtifact` 显式跳过（派生内容，避免每句重复入索引） |
+
+### 9.3.3 复盘闭环
+
+| 组件 | 说明 |
+|---|---|
+| `POST /v1/projects/:id/review` | 取最近 5 条 `project_metrics`，计算播放/点赞/评论环比、互动率、收益，附发布包摘要（≤800 字）；生成 `review-report` 后 `advanceStage(id, 'review')` |
+| Run 记账 | agentId 用 `critic`，与生成类接口同样建 Run 行、累计 token 与花费 |
+| 界面 | 复盘页「生成复盘报告」按钮（无指标时禁用），生成后渲染 Markdown 并保留最近一份报告 |
+
+### 9.3.4 v0.4 验证
+
+- `pnpm verify`：9 个包 456 passed（本次新增 32 例）全绿
+- `packages/store-sqlite/test/style-store.test.ts` 5 例：用户隔离、上限截断、删除时解绑
+- `apps/daemon/test/style-subtitle.test.ts` 11 例：风格 CRUD/挂载/注入/lint、字幕导出与跨项目拒绝、复盘生成与阶段推进
+- `apps/daemon/test/subtitle.test.ts` 5 例：切条、单调时间戳、SRT 格式、空脚本
+- `apps/desktop/test/style.test.tsx` 5 例：风格面板、项目挂载、脚本导出、复盘生成
+- Playwright 真浏览器：设置-风格、项目概览、脚本页、复盘页 0 console error、0 横向溢出；新截图 `docs/screenshots/33-settings-styles.png`
+
 ## 9.2 v0.3 增量：记忆检索与多租户隔离（2026-10-24）
 
 ### 9.2.1 本地记忆索引（`packages/store-sqlite/src/memory-index.ts`）
@@ -736,6 +1295,20 @@ Postgres 版本应把这些访问器实现为 `WHERE user_id = $1`，并叠加 R
 
 | 日期 | 变更摘要 | 影响的章节 | 关联任务/ADR | 验证方式 |
 |---|---|---|---|---|
+| 2026-11-02 | v0.17：质量门禁补强——lint 作为 fail-closed 门禁、离线模型冒烟（成功/坏输出/超时/取消/脱敏/预算）、AbortSignal 贯穿到 fetch、Postgres 集成缺 URL 即失败、浏览器点击巡检入 CI、ECharts 与 Cytoscape 按需拆包；修桌面端随机失败测试（异步预算 1s → 5s）；新增版本一致性校验与 STATUS/ROADMAP/RELEASING/VERIFICATION 四份管理文档 | §10 质量门禁 | T70–T72 | `pnpm verify` 642 passed + 9 skipped 连续 5 次 / shoot 26 页 0 error 0 溢出 / click-sweep 583 次点击 0 发现 / API 全链路 7 产物 + 检查表全绿 + 导出 zip |
+| 2026-10-28 | v0.16：项目卡进度语义、阶段 chip 单行滚动、模型 chip 省略、深色进度条对比度、时间轴内边距、资料库计数文案；ECharts 改为按需组装（1090 → 547 KB） | §9.15 | T68–T69 | `pnpm verify` 636 passed + 9 skipped / 20 页 × 2 宽度 × 2 主题 0 error 0 溢出 / 打包体积实测 |
+| 2026-10-27 | v0.15：交互巡检脚本（728 次点击 + 键盘遍历，按场景包推导路由）、修写作台新建章节 400 与空项目可视化空骨架 | §9.14 | T66–T67 | `pnpm verify` 634 passed + 9 skipped / click-sweep 0 findings / 2 张新截图 |
+| 2026-10-27 | v0.14：canvas 主题（`lib/canvasTheme.ts` + MutationObserver）、三个图表/图/时间轴的深色可读性修复、关系图按内容定高与孤立卡开关、缩放控件、写作台进度环/全书进度/章节篇幅柱 | §9.13 | T64–T65 | `pnpm verify` 631 passed + 9 skipped / 浅色深色各 12 页截图 0 error 0 溢出 / 4 组新截图 |
+| 2026-10-27 | v0.13：视图驱动路由（`stageHref` + 通用阶段页 `/stage/:stageKey`）、检查表与命令面板改用包标签、按 entityType 解析生成阶段、记忆索引放宽 kind 并重建 FTS 触发器、复盘/导出按包推进、看板分组校验、课程与短视频补看板 | §9.12 | T62–T63 | `pnpm verify` 628 passed + 9 skipped / 真机四个症状全部消除 / 4 张新截图 |
+| 2026-10-26 | v0.12：第六种视图 `document`（写作台：单栏编辑器、自动保存、字数统计）、手稿投影与 Word/Markdown 导出（`docx@9.14.0`）、下载名白名单、看板拖拽（`@dnd-kit`）与卡片 `order` 持久化 | §9.11 | T60–T61 | `pnpm verify` 612 passed + 9 skipped / 真机自动保存与拖拽落库 / docx 9 章顺序校验 / 4 张新截图 |
+| 2026-10-26 | v0.11：叙事时间轴（cytoscape-dagre 分层布局、横向滚动、章节跳转）、伏笔健康分析接口与右侧问题清单、章节卡新增序号字段；修 fit 压成缩略图与跳转不同步滚动两个视觉缺陷 | §9.10 | T58–T59 | `pnpm verify` 587 passed + 9 skipped / 真机 9 章可滚动可跳转 / 2 张新截图 |
+| 2026-10-26 | v0.10：关系图页面（Cytoscape 3.33.1 替换初版 ECharts graph）、`GET /v1/projects/:id/graph`、类型筛选/搜索/选中高亮/侧栏详情；节点坐标发布以支持自动化点击 | §9.9 | T56–T57 | `pnpm verify` 583 passed + 9 skipped / 真机 16 卡 15 边选中态正确 / 2 张新截图 |
+| 2026-10-26 | v0.9：场景扩展架构——包格式版本 + 视图能力协商、`inherits` 继承（循环/深度防护）、导出导入闭环、`board` 看板视图、关系类型化（正向/反向标签 + 端点约束）、新增 copywriting 与 shorts 两个纯数据场景 | §9.8 | T52–T55 | `pnpm verify` 579 passed + 9 skipped / 真机看板与类型化关系通过 / 3 张新截图 |
+| 2026-10-26 | v0.8：卡片关联（有向边 + 派生反向引用 + 级联删除）；卡片编辑改抽屉（焦点环绕/Escape/焦点归还）；删除确认；toast 反馈；看板搜索；固定层 portal 到 body | §9.7 | T49–T51 | `pnpm verify` 560 passed + 9 skipped / 真机连续输入与键盘路径通过 / 3 张新截图 |
+| 2026-10-26 | v0.7：场景包（4 套内置 + 用户自定义）与通用卡片实体；`projects.stage` 从 enum 改为场景内键并按包校验；检查表按包生成且卡片驱动阶段数卡片；新增 `outline`/`chapter` 产物契约与阶段级 `promptHint`；迁移 009 重建 projects/artifacts 表 | §9.6 | T45–T48 | `pnpm verify` 518 passed + 9 skipped / 真机小说项目阶段栏正确 / 6 张新截图 0 console error |
+| 2026-10-26 | v0.6：云端 `CloudStore` 抽象 + Postgres 实现（租户谓词、配对码单语句消费、连接池释放）；Tauri `tauri-plugin-updater` + 签名产物；CI verify/desktop 扩到三平台三产物；安全审计排除 `.tmp/` | §9.5 | T42–T44 | `pnpm verify` 510 passed（含 Postgres 集成 9 例）/ 真实 PG 16.4 端到端 6 项 / Ed25519 验签 PASS / 安装包 13.01 MiB |
+| 2026-10-26 | v0.5：阶段页 Markdown 渲染、发布页清单与计数对齐、导出默认最新版 + 自动推进 published + manifest 版本取自 package.json；Agent 创建期校验并补齐 4 个 AgentSpec；项目软删恢复入口；资料库字幕筛选；`http.fetch`/`fs.list` 工具与资料抓取溯源（SSRF/robots/体积/超时守卫 + 引文核验 + 抓取记录） | §9.4 | T38–T41 | `pnpm verify` 494 passed（9 包）/ security-audit 160 files PASS / 真机 e2e 全项通过 / 5 张新截图 0 console error 0 溢出 |
+| 2026-10-26 | v0.4：风格档案（迁移 008 `style_profiles`、项目挂载、生成时注入「作者风格偏好」块、禁用词 lint 与检查表 `style` 项）；SRT 字幕导出（`apps/daemon/src/subtitle.ts`、`POST /v1/projects/:id/subtitle`、发布包自动收录）；复盘闭环（`POST /v1/projects/:id/review`，指标窗口 5 条 + 发布包摘要 → review-report → 阶段推进）；CLI 4 条新命令 | §6.1 StyleProfile、§7.5、§9.3 | T35–T37 | `pnpm verify` 456 passed（9 包）/ 新增 32 例测试 / Playwright 真浏览器 0 console error 0 溢出 / 真机 daemon 端到端导出含 SRT 的 zip |
 | 2026-10-24 | v0.3：本地混合记忆检索（FTS5 trigram + 向量 + RRF，默认离线哈希嵌入，可选模型嵌入）、生成时记忆注入、`/v1/memory/*` 与 `/v1/settings/embedding`；云端多租户隔离下沉到 store（跨租户 404 + 安全事件 + Run 设备降级） | §9.2 | T31–T34 | `pnpm -r test` 421 passed（9 包）/ typecheck / build / security-audit 145 files PASS / contrast PASS / 真实模型验证 |
 | 2026-10-24 | v0.2：审批续跑、取消、项目生命周期、分镜/复盘/资料库/自动化四页落地、密钥库、Web 形态、CLI、深色主题与命令面板、生成记账与容错矫正、项目级产物路径 | §6、§7、§9.1 | T22–T30 | `pnpm -r test` 386 passed（9 包）/ typecheck / build / security-audit 139 files PASS / contrast PASS / tauri 11.93 MiB / 真实模型 6 阶段端到端 / 29 张截图 0 console error |
 | 2026-10-23 | 云端安全收口：`/v1/tool` 增加属主校验（跨用户/不存在设备统一 404 遮蔽）；新增 `POST /v1/devices/:id/rotate` 手动令牌轮换（旧令牌立即失效，已吊销 409） | §7.5、§7.3 | T12/T16 加固 | `pnpm -r test` 360 passed（cloud 24）/ typecheck / build / security-audit 117 files PASS / AQG 检查 PASSED |

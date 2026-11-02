@@ -6,6 +6,7 @@ import {
   api,
   apiExtra,
   type Automation,
+  type AutomationRun,
   type Project,
 } from '../api';
 import { AppShell, EmptyState, PageHead } from '../components/AppShell';
@@ -228,8 +229,8 @@ export function AutomationsPage(): React.ReactElement {
                 <span>上次：{relativeTime(automation.lastRunAt)}</span>
                 <span>下次：{automation.enabled ? relativeTime(automation.nextRunAt) : '已暂停'}</span>
                 {automation.recentRuns[0] !== undefined && (
-                  <span className={`badge ${automation.recentRuns[0].status === 'succeeded' ? 'ok' : 'danger'}`}>
-                    最近 {automation.recentRuns[0].status}
+                  <span className={`badge ${runBadgeTone(automation.recentRuns[0].status)}`}>
+                    最近 {runLabel(automation.recentRuns[0].status)}
                   </span>
                 )}
                 <Link className="link-btn" to={`/p/${automation.projectId}`}>
@@ -253,4 +254,31 @@ export function AutomationsPage(): React.ReactElement {
       )}
     </AppShell>
   );
+}
+
+/**
+ * A run that the daemon stopped in the middle of is not a failure the user caused,
+ * and it is not success either. It gets its own label and a neutral tone so the
+ * badge does not read as "this automation is broken".
+ */
+function runLabel(status: AutomationRun['status']): string {
+  switch (status) {
+    case 'succeeded':
+      return '成功';
+    case 'failed':
+      return '失败';
+    case 'running':
+      return '运行中';
+    case 'interrupted':
+      return '已中断';
+    default:
+      return status;
+  }
+}
+
+function runBadgeTone(status: AutomationRun['status']): string {
+  if (status === 'succeeded') return 'ok';
+  if (status === 'interrupted') return 'warn';
+  if (status === 'running') return 'info';
+  return 'danger';
 }

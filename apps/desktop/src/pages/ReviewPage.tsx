@@ -3,7 +3,9 @@ import type React from 'react';
 import { useParams } from 'react-router-dom';
 import { ApiError, api, apiExtra, type Project, type ProjectMetrics } from '../api';
 import { AppShell, EmptyState, PageHead } from '../components/AppShell';
-import { Chart, barsOption, trendOption } from '../components/Chart';
+import { Chart, barsOption, chartPalette, trendOption } from '../components/Chart';
+import { useCanvasTheme } from '../lib/canvasTheme';
+import { Markdown } from '../components/Markdown';
 import { formatCny, formatNumber } from '../lib/format';
 
 export function ReviewPage(): React.ReactElement {
@@ -12,6 +14,10 @@ export function ReviewPage(): React.ReactElement {
   const [metrics, setMetrics] = useState<ProjectMetrics[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [report, setReport] = useState<{ path: string; content: string } | null>(null);
+  const canvasTheme = useCanvasTheme();
   const [form, setForm] = useState({
     views: '',
     likes: '',
@@ -24,9 +30,21 @@ export function ReviewPage(): React.ReactElement {
 
   const load = useCallback(async () => {
     try {
-      const [projectResult, metricsResult] = await Promise.all([api.getProject(id), apiExtra.metrics(id)]);
+      const [projectResult, metricsResult, artifactResult] = await Promise.all([
+        api.getProject(id),
+        // Older daemons predate the metrics/report routes; a missing endpoint must
+        // degrade to an empty review page, not an error screen.
+        apiExtra.metrics(id).catch(() => ({ metrics: [] as ProjectMetrics[] })),
+        api.listArtifacts(id).catch(() => ({ artifacts: [] })),
+      ]);
       setProject(projectResult.project);
       setMetrics(metricsResult.metrics);
+      // Show the most recent report on load so a refresh does not hide it.
+      const latestReport = artifactResult.artifacts.find((artifact) => artifact.kind === 'review-report');
+      if (latestReport !== undefined) {
+        const detail = await api.getArtifact(latestReport.id);
+        setReport({ path: latestReport.path, content: detail.content });
+      }
       setError(null);
     } catch (cause) {
       setError(cause instanceof ApiError || cause instanceof Error ? cause.message : String(cause));
@@ -61,6 +79,24 @@ export function ReviewPage(): React.ReactElement {
 
   const ordered = useMemo(() => [...metrics].reverse(), [metrics]);
 
+  const generateReport = async (): Promise<void> => {
+    setGenerating(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await apiExtra.generateReview(id);
+      const detail = await api.getArtifact(result.artifact.id);
+      setReport({ path: result.artifact.path, content: detail.content });
+      setNotice('复盘报告已生成并存档，可继续回填下期数据。');
+      await load();
+    } catch (cause) {
+      setError(cause instanceof ApiError || cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const palette = useMemo(() => chartPalette(canvasTheme), [canvasTheme]);
   const chart = useMemo(() => {
     const labels = ordered.map((entry) =>
       new Date(entry.recordedAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
@@ -69,15 +105,15 @@ export function ReviewPage(): React.ReactElement {
       { name: '播放', values: ordered.map((entry) => entry.views) },
       { name: '点赞', values: ordered.map((entry) => entry.likes) },
       { name: '评论', values: ordered.map((entry) => entry.comments) },
-    ]);
-  }, [ordered]);
+    ], palette);
+  }, [ordered, palette]);
 
   const retention = useMemo(() => {
     const labels = ordered.map((entry) =>
       new Date(entry.recordedAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
     );
-    return barsOption(labels, ordered.map((entry) => entry.retentionPercent), '完播率 %');
-  }, [ordered]);
+    return barsOption(labels, ordered.map((entry) => entry.retentionPercent), '完播率 %', palette);
+  }, [ordered, palette]);
 
   const latest = metrics[0];
   const previous = metrics[1];
@@ -109,9 +145,31 @@ export function ReviewPage(): React.ReactElement {
         <button className="btn" onClick={() => void load()}>
           刷新
         </button>
+        <button
+          className="btn primary"
+          disabled={generating || metrics.length === 0}
+          title="把已回填的数据交给模型做归因，生成复盘报告并存档"
+          onClick={() => void generateReport()}
+        >
+          {generating ? '生成中…' : '生成复盘报告'}
+        </button>
       </PageHead>
 
       {error !== null && <div className="panel error-panel">{error}</div>}
+      {notice !== null && <div className="panel notice-panel">{notice}</div>}
+
+      {report !== null && (
+        <section className="panel">
+          <div className="panel-head">
+            <span className="panel-title">复盘报告 · {report.path}</span>
+            <span className="spacer" />
+            <button className="btn sm ghost" onClick={() => setReport(null)}>
+              收起
+            </button>
+          </div>
+          <Markdown content={report.content} />
+        </section>
+      )}
 
       {metrics.length === 0 ? (
         <EmptyState title="还没有数据" hint="在下方录入本期播放、点赞、评论，之后可以看趋势与归因。" />
@@ -131,13 +189,13 @@ export function ReviewPage(): React.ReactElement {
               <div className="panel-head">
                 <span className="panel-title">播放 / 点赞 / 评论趋势</span>
               </div>
-              <Chart option={chart} height={280} />
+              <Chart option={chart} height={280} label="播放、点赞、评论趋势" />
             </section>
             <section className="panel">
               <div className="panel-head">
                 <span className="panel-title">完播率</span>
               </div>
-              <Chart option={retention} height={280} />
+              <Chart option={retention} height={280} label="完播率" />
             </section>
           </div>
         </>

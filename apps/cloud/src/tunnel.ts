@@ -115,8 +115,12 @@ export class TunnelRegistry {
   }
 }
 
-/** Synchronous so the socket attaches in the same tick the upgrade completes. */
-export type TunnelAuthenticator = (deviceId: string, token: string) => boolean;
+/**
+ * May be async: a Postgres-backed store has to look the token up before the socket
+ * is attached. The socket stays unattached until the check resolves, so an invalid
+ * token can never send or receive a frame.
+ */
+export type TunnelAuthenticator = (deviceId: string, token: string) => boolean | Promise<boolean>;
 
 export async function attachTunnelServer(
   server: Server,
@@ -125,18 +129,29 @@ export async function attachTunnelServer(
 ): Promise<WebSocketServer> {
   const wss = new WebSocketServer({ server, path: '/v1/tunnel' });
   wss.on('connection', (socket, request) => {
-    const url = new URL(request.url ?? '/', 'http://localhost');
-    const deviceId = url.searchParams.get('deviceId') ?? '';
-    const token = url.searchParams.get('token') ?? '';
-    if (deviceId === '' || token === '') {
-      socket.close(4001, 'deviceId and token required');
-      return;
-    }
-    if (authenticate !== undefined && !authenticate(deviceId, token)) {
-      socket.close(4003, 'invalid device token');
-      return;
-    }
-    registry.attach(deviceId, socket);
+    void (async () => {
+      const url = new URL(request.url ?? '/', 'http://localhost');
+      const deviceId = url.searchParams.get('deviceId') ?? '';
+      const token = url.searchParams.get('token') ?? '';
+      if (deviceId === '' || token === '') {
+        socket.close(4001, 'deviceId and token required');
+        return;
+      }
+      if (authenticate !== undefined) {
+        let allowed = false;
+        try {
+          allowed = await authenticate(deviceId, token);
+        } catch {
+          // A store failure must fail closed: no token check, no tunnel.
+          allowed = false;
+        }
+        if (!allowed) {
+          socket.close(4003, 'invalid device token');
+          return;
+        }
+      }
+      registry.attach(deviceId, socket);
+    })();
   });
   return wss;
 }

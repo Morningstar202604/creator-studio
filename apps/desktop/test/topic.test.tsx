@@ -12,6 +12,29 @@ vi.mock('../src/api', async () => {
       health: vi.fn(async () => ({ ok: true, version: 1, workspaceRoot: 'C:/ws', os: 'win32', pid: 1 })),
       tools: vi.fn(async () => ({ tools: [] })),
       listProjects: vi.fn(async () => ({ projects: [] })),
+      scenarios: vi.fn(async () => ({
+        scenarios: [
+          {
+            id: 'video',
+            name: '中长视频',
+            description: '',
+            icon: '',
+            builtin: true,
+            defaultPlatform: 'bilibili',
+            stages: [
+              { key: 'topic', label: '选题', hint: '', produces: ['topic-card'], promptHint: '', required: true },
+              { key: 'research', label: '资料', hint: '', produces: ['research-notes'], promptHint: '', required: true },
+              { key: 'script', label: '脚本', hint: '', produces: ['script'], promptHint: '', required: true },
+              { key: 'shotlist', label: '分镜', hint: '', produces: ['shot-list'], promptHint: '', required: false },
+              { key: 'package', label: '包装', hint: '', produces: ['publish-pack'], promptHint: '', required: true },
+              { key: 'published', label: '发布', hint: '', produces: [], promptHint: '', required: false },
+              { key: 'review', label: '复盘', hint: '', produces: ['review-report'], promptHint: '', required: false },
+            ],
+            entityTypes: [],
+          },
+        ],
+        defaultId: 'video',
+      })),
       getProject: vi.fn(async () => ({
         project: {
           id: 'p1',
@@ -101,7 +124,9 @@ describe('R5 topic page uses real data', () => {
     await user.click(screen.getByRole('button', { name: '开始生成' }));
 
     await waitFor(() => {
-      expect(mocked.generate).toHaveBeenCalledWith('p1', 'topic-card', 'AI 与就业');
+      // No sources are entered on the topic page, so the call carries undefined
+      // in that 4th slot and the daemon keeps its original three-field contract.
+      expect(mocked.generate).toHaveBeenCalledWith('p1', 'topic-card', 'AI 与就业', undefined);
     });
     await waitFor(() => {
       expect(screen.getByText(/真实选题标题/)).toBeTruthy();

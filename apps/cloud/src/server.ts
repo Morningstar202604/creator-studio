@@ -2,18 +2,18 @@ import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 
 import { TunnelRegistry, attachTunnelServer } from './tunnel.js';
-import { MemoryStore, PLANS, type CloudRun } from './store.js';
+import { MemoryStore, PLANS, type CloudRun, type CloudStore } from './store.js';
 
 export type CloudOptions = {
   port?: number;
-  store?: MemoryStore;
+  store?: CloudStore;
   tunnel?: TunnelRegistry;
   now?: () => Date;
 };
 
 export type CloudApp = {
   server: Server;
-  store: MemoryStore;
+  store: CloudStore;
   tunnel: TunnelRegistry;
   listen(port?: number, host?: string): Promise<number>;
   close(): Promise<void>;
@@ -73,8 +73,8 @@ export function createCloud(options: CloudOptions = {}): CloudApp {
         service: 'creator-studio-cloud',
         onlineDevices: tunnel.online().length,
         // Aggregate counts only; no tenant identifiers in an unauthenticated route.
-        runs: store.runs.size,
-        tenants: new Set([...store.devices.values()].map((entry) => entry.userId)).size,
+        runs: await store.runsCount(),
+        tenants: await store.tenantCount(),
       });
     }
 
@@ -82,7 +82,7 @@ export function createCloud(options: CloudOptions = {}): CloudApp {
     if (path === '/v1/pair/start' && method === 'POST') {
       const body = await readJson(req);
       const userId = typeof body.userId === 'string' ? body.userId : 'cloud-user';
-      const code = store.createPairingCode(userId, '');
+      const code = await store.createPairingCode(userId, '');
       return send(res, 201, { code: code.code, expiresAt: new Date(code.expiresAt).toISOString() });
     }
 
@@ -91,11 +91,11 @@ export function createCloud(options: CloudOptions = {}): CloudApp {
       if (typeof body.code !== 'string') {
         return send(res, 400, { error: { code: 'INVALID_INPUT', message: 'code required' } });
       }
-      const consumed = store.consumePairingCode(body.code);
+      const consumed = await store.consumePairingCode(body.code);
       if (consumed === null) {
         return send(res, 400, { error: { code: 'PAIRING_INVALID', message: 'code expired or already used' } });
       }
-      const { device, token } = store.createDevice({
+      const { device, token } = await store.createDevice({
         userId: consumed.userId,
         name: typeof body.name === 'string' ? body.name : 'desktop',
         os: body.os === 'macos' || body.os === 'linux' ? body.os : 'windows',
@@ -107,25 +107,23 @@ export function createCloud(options: CloudOptions = {}): CloudApp {
 
     // --- everything below requires a device token ---
     const token = bearer(req);
-    const device = token === null ? null : store.findByToken(token);
+    const device = token === null ? null : await store.findByToken(token);
     if (device === null) {
       return send(res, 401, { error: { code: 'UNAUTHORIZED', message: 'missing or invalid token' } });
     }
-    store.touchDevice(device.id);
+    await store.touchDevice(device.id);
 
     if (path === '/v1/me' && method === 'GET') {
       return send(res, 200, {
         deviceId: device.id,
         userId: device.userId,
-        usage: store.usage(device.userId),
-        plan: store.planOf(device.userId),
+        usage: await store.usage(device.userId),
+        plan: await store.planOf(device.userId),
       });
     }
 
     if (path === '/v1/devices' && method === 'GET') {
-      const mine = store
-        .devicesOf(device.userId)
-        .map((entry) => ({
+      const mine = (await store.devicesOf(device.userId)).map((entry) => ({
           id: entry.id,
           name: entry.name,
           os: entry.os,
@@ -140,24 +138,24 @@ export function createCloud(options: CloudOptions = {}): CloudApp {
       const targetId = path.slice('/v1/devices/'.length, -'/rotate'.length);
       // Tenant-scoped lookup: a foreign device is indistinguishable from a missing
       // one, and the store records the attempt as a security event.
-      const target = store.deviceFor(device.userId, targetId);
+      const target = await store.deviceFor(device.userId, targetId);
       if (target === null) {
         return send(res, 404, { error: { code: 'NOT_FOUND', message: targetId } });
       }
       if (target.revokedAt !== null) {
         return send(res, 409, { error: { code: 'DEVICE_REVOKED', message: targetId } });
       }
-      const rotated = store.rotateDevice(targetId);
+      const rotated = await store.rotateDevice(targetId);
       return send(res, 201, { token: rotated });
     }
 
     if (path.startsWith('/v1/devices/') && method === 'DELETE') {
       const targetId = path.slice('/v1/devices/'.length);
-      const target = store.deviceFor(device.userId, targetId);
+      const target = await store.deviceFor(device.userId, targetId);
       if (target === null) {
         return send(res, 404, { error: { code: 'NOT_FOUND', message: targetId } });
       }
-      store.revokeDevice(targetId);
+      await store.revokeDevice(targetId);
       // A revoked device must not keep an open tunnel; drop it with its pending calls.
       tunnel.close(targetId);
       return send(res, 200, { revoked: targetId });
@@ -165,8 +163,8 @@ export function createCloud(options: CloudOptions = {}): CloudApp {
 
     if (path === '/v1/runs' && method === 'POST') {
       const body = await readJson(req);
-      const plan = store.planOf(device.userId);
-      const used = store.runsThisMonth(device.userId);
+      const plan = await store.planOf(device.userId);
+      const used = await store.runsThisMonth(device.userId);
       if (used >= plan.monthlyRuns) {
         return send(res, 402, {
           error: { code: 'PLAN_LIMIT', message: `${used}/${plan.monthlyRuns} runs used this month` },
@@ -176,7 +174,7 @@ export function createCloud(options: CloudOptions = {}): CloudApp {
       // becomes a cloud-only run instead of pointing at a foreign tunnel.
       const requestedDevice = typeof body.deviceId === 'string' ? body.deviceId : null;
       const ownedDevice =
-        requestedDevice !== null && store.deviceFor(device.userId, requestedDevice) !== null
+        requestedDevice !== null && (await store.deviceFor(device.userId, requestedDevice)) !== null
           ? requestedDevice
           : null;
       const run: CloudRun = {
@@ -191,25 +189,25 @@ export function createCloud(options: CloudOptions = {}): CloudApp {
         endedAt: null,
         error: null,
       };
-      store.recordRun(run);
-      store.charge({ userId: device.userId, runId: run.id, kind: 'run', units: 1, costCny: 0 });
+      await store.recordRun(run);
+      await store.charge({ userId: device.userId, runId: run.id, kind: 'run', units: 1, costCny: 0 });
       return send(res, 201, { run });
     }
 
     if (path === '/v1/runs' && method === 'GET') {
-      return send(res, 200, { runs: store.runsOf(device.userId) });
+      return send(res, 200, { runs: await store.runsOf(device.userId) });
     }
 
     if (path.startsWith('/v1/runs/') && method === 'GET') {
       const runId = path.slice('/v1/runs/'.length);
-      const run = store.runFor(device.userId, runId);
+      const run = await store.runFor(device.userId, runId);
       if (run === null) return send(res, 404, { error: { code: 'NOT_FOUND', message: runId } });
       return send(res, 200, { run });
     }
 
     if (path.startsWith('/v1/runs/') && method === 'PATCH') {
       const runId = path.slice('/v1/runs/'.length);
-      if (store.runFor(device.userId, runId) === null) {
+      if ((await store.runFor(device.userId, runId)) === null) {
         return send(res, 404, { error: { code: 'NOT_FOUND', message: runId } });
       }
       const body = await readJson(req);
@@ -222,7 +220,7 @@ export function createCloud(options: CloudOptions = {}): CloudApp {
         patch.status = body.status as CloudRun['status'];
       }
       if (typeof body.error === 'string') patch.error = body.error;
-      const updated = store.updateRun(device.userId, runId, patch);
+      const updated = await store.updateRun(device.userId, runId, patch);
       if (updated === null) return send(res, 404, { error: { code: 'NOT_FOUND', message: runId } });
       return send(res, 200, { run: updated });
     }
@@ -233,7 +231,7 @@ export function createCloud(options: CloudOptions = {}): CloudApp {
       const targetDevice = typeof body.deviceId === 'string' ? body.deviceId : device.id;
       // A device may only drive tunnels of devices owned by the same user; unknown
       // ids get the same 404 so existence is not leaked either way.
-      const target = store.deviceFor(device.userId, targetDevice);
+      const target = await store.deviceFor(device.userId, targetDevice);
       if (target === null) {
         return send(res, 404, { error: { code: 'NOT_FOUND', message: targetDevice } });
       }
@@ -262,7 +260,7 @@ export function createCloud(options: CloudOptions = {}): CloudApp {
     }
 
     if (path === '/v1/usage' && method === 'GET') {
-      return send(res, 200, store.usage(device.userId));
+      return send(res, 200, await store.usage(device.userId));
     }
 
     if (path === '/v1/plans' && method === 'GET') {
@@ -272,7 +270,7 @@ export function createCloud(options: CloudOptions = {}): CloudApp {
     // Tenant-scoped audit of denied cross-tenant access attempts. Admin/debug only:
     // it exposes ids, never payloads, and only for the caller's own tenant.
     if (path === '/v1/security-events' && method === 'GET') {
-      const mine = store.securityEvents.filter((event) => event.actorUserId === device.userId);
+      const mine = await store.securityEventsOf(device.userId);
       return send(res, 200, { events: mine });
     }
 
@@ -281,10 +279,10 @@ export function createCloud(options: CloudOptions = {}): CloudApp {
 
   // The WS upgrade is the one endpoint that cannot carry a Bearer header, so the
   // device token rides in the query string and is validated against the same store.
-  const wssReady = attachTunnelServer(server, tunnel, (tunnelDeviceId, tunnelToken) => {
-    const tokenDevice = store.findByToken(tunnelToken);
+  const wssReady = attachTunnelServer(server, tunnel, async (tunnelDeviceId, tunnelToken) => {
+    const tokenDevice = await store.findByToken(tunnelToken);
     if (tokenDevice === null || tokenDevice.id !== tunnelDeviceId) return false;
-    store.touchDevice(tokenDevice.id);
+    await store.touchDevice(tokenDevice.id);
     return true;
   });
 
@@ -302,6 +300,8 @@ export function createCloud(options: CloudOptions = {}): CloudApp {
       for (const client of wss.clients) client.terminate();
       await new Promise<void>((resolve) => wss.close(() => resolve()));
       await new Promise<void>((resolve) => server.close(() => resolve()));
+      // Release the backend (Postgres pool) so tests and shutdown do not leak handles.
+      await store.close();
     },
   };
 }

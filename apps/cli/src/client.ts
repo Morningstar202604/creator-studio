@@ -146,8 +146,33 @@ export class DaemonClient {
     return this.request(`/v1/projects/${projectId}/checklist`);
   }
 
-  publish(projectId: string): Promise<{ file: string; absolutePath: string; bytes: number; entries: string[] }> {
-    return this.request(`/v1/projects/${projectId}/publish`, { method: 'POST' });
+  publish(
+    projectId: string,
+    options: { includeHistory?: boolean } = {},
+  ): Promise<{ file: string; absolutePath: string; bytes: number; entries: string[]; stage?: string }> {
+    return this.request(`/v1/projects/${projectId}/publish`, {
+      method: 'POST',
+      body: JSON.stringify(options.includeHistory === true ? { includeHistory: true } : {}),
+    });
+  }
+
+  subtitle(projectId: string, scriptArtifactId?: string): Promise<{ artifact: Artifact; cues: number }> {
+    return this.request(`/v1/projects/${projectId}/subtitle`, {
+      method: 'POST',
+      body: JSON.stringify(scriptArtifactId === undefined ? {} : { scriptArtifactId }),
+    });
+  }
+
+  review(projectId: string): Promise<{ artifact: Artifact; runId: string }> {
+    return this.request(`/v1/projects/${projectId}/review`, { method: 'POST' });
+  }
+
+  styles(): Promise<{ styles: Array<{ id: string; name: string; tone: string; bannedWords: string[] }> }> {
+    return this.request('/v1/styles');
+  }
+
+  saveStyle(input: { id?: string; name: string; tone?: string; audience?: string; bannedWords?: string[]; notes?: string }): Promise<{ style: { id: string; name: string } }> {
+    return this.request('/v1/styles', { method: 'POST', body: JSON.stringify(input) });
   }
 
   createRun(projectId: string, message: string, agentId: string): Promise<{ run: Run }> {

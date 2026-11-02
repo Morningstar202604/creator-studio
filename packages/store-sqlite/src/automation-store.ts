@@ -33,7 +33,8 @@ type AutomationRunRow = {
 export type AutomationRun = {
   id: string;
   automationId: string;
-  status: 'running' | 'succeeded' | 'failed';
+  /** `interrupted` is written at startup for runs a dead process left behind. */
+  status: 'running' | 'succeeded' | 'failed' | 'interrupted';
   artifactId: string | null;
   error: string | null;
   startedAt: string;
@@ -72,6 +73,29 @@ export class SqliteAutomationStore {
     private readonly db: Database,
     private readonly now: () => Date = () => new Date(),
   ) {}
+
+  /**
+   * Marks runs left `running` by a previous process as interrupted.
+   *
+   * A run row is written as `running` before the model call and updated after it.
+   * If the daemon dies in between, that row stays `running` forever and the UI
+   * shows a run that will never finish. Nothing can still be executing at startup,
+   * so the honest state is `interrupted`, written once here rather than repaired
+   * lazily on every read.
+   *
+   * Returns how many rows were corrected, so startup can log it.
+   */
+  recoverInterruptedRuns(): number {
+    const endedAt = this.now().toISOString();
+    const result = this.db
+      .prepare(
+        `UPDATE automation_runs
+            SET status = 'interrupted', ended_at = ?, error = 'daemon stopped while the run was in progress'
+          WHERE status = 'running'`,
+      )
+      .run(endedAt);
+    return result.changes;
+  }
 
   create(input: AutomationInput): Automation {
     const createdAt = this.now();

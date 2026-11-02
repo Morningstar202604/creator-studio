@@ -6,10 +6,26 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
 import type { Database } from 'better-sqlite3';
-import type { Run, ToolGrant } from '@creator-studio/protocol';
-import { AgentIdSchema, ProjectStageSchema } from '@creator-studio/protocol';
+import type { Artifact, Run, ToolGrant } from '@creator-studio/protocol';
+import {
+  AgentIdSchema,
+  EntityCardInputSchema,
+  ProjectMetricsInputSchema,
+  ProjectStageSchema,
+  PACK_FORMAT_VERSION,
+  RelationInputSchema,
+  STAGE_VIEWS,
+  ScenarioPackSchema,
+  negotiatePack,
+  lintBannedWords,
+  stageView,
+  validateCardAgainstType,
+  type DocumentConfig,
+  type ResearchNotes,
+  type ScenarioPack,
+} from '@creator-studio/protocol';
 import { ModelGateway, localEmbeddingProvider, type EmbeddingProvider } from '@creator-studio/model-gateway';
-import { MemoryAuditSink, ToolHost, ToolError, type ToolDefinition } from '@creator-studio/tools';
+import { MemoryAuditSink, ToolHost, ToolError, fetchPage, listDirectory, type ListEntry, type ToolDefinition } from '@creator-studio/tools';
 import {
   SqliteRunStore,
   SqliteProjectStore,
@@ -17,6 +33,8 @@ import {
   SqliteSettingsStore,
   SqliteAutomationStore,
   SqliteMetricsStore,
+  SqliteStyleStore,
+  SqliteScenarioStore,
   SqliteMemoryIndex,
   ArtifactCorruptError,
   DEFAULT_BUDGET,
@@ -25,8 +43,26 @@ import {
 import { EventBus, SSE_HEARTBEAT_MS, writeHeartbeat, writeSseEvent } from './stream.js';
 import { isGenerateKind } from './generate.js';
 import { buildChecklist, buildZip, exportFileName, isExportableKind } from './publish.js';
+import { buildDocx, buildMarkdown, collectChapters, countChars, MANUSCRIPT_MAX_CHARS } from './manuscript.js';
+import { buildSrt, scriptToCues } from './subtitle.js';
 import { generateArtifact, ModelOutputError, type RetrieveFn } from './pipeline.js';
+import { MAX_SOURCES, gatherSources, renderSourceLedger, verifyNotes, type ResearchBundle } from './research.js';
 import { AgentRunner, type AgentSpec, type RunOutcome } from '@creator-studio/agent-core';
+
+/**
+ * Single source of truth for the version stamped into exported manifests. Read
+ * from the daemon's own package.json at startup so a release bump cannot leave a
+ * stale string in the zip.
+ */
+export const DAEMON_VERSION: string = (() => {
+  try {
+    const raw = readFileSync(new URL('../package.json', import.meta.url), 'utf8');
+    const parsed = JSON.parse(raw) as { version?: unknown };
+    return typeof parsed.version === 'string' ? parsed.version : '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+})();
 
 /** Rejects absolute paths and any `..` segment before it reaches the archive. */
 function resolveRelativeName(path: string): string {
@@ -62,6 +98,10 @@ export type DaemonOptions = {
   /** Secret resolver (env/vault). Injecting one keeps tests hermetic. */
   resolveSecret?: (ref: string) => string | null;
   secretStore?: { set(name: string, value: string): string; delete(name: string): void };
+  /** Override outbound HTTP (tests inject a fake; production uses global fetch). */
+  fetchImpl?: typeof fetch;
+  /** Override DNS resolution for the fetch guard; tests keep this hermetic. */
+  lookup?: (hostname: string) => Promise<Array<{ address: string; family: number }>>;
 };
 
 export type Daemon = {
@@ -94,8 +134,34 @@ const DEFAULT_AGENTS: AgentSpec[] = [
   {
     id: 'editor',
     systemPrompt: '你是剪辑助理，负责整理素材与删除废弃文件。破坏性操作前必须请求确认。',
-    tools: ['fs.read', 'fs.delete'],
+    tools: ['fs.read', 'fs.list', 'fs.delete'],
     maxOutputTokens: 1024,
+  },
+  {
+    id: 'scout',
+    systemPrompt:
+      '你是选题侦察。用 http.fetch 读公开页面、用 fs.read 读本地资料，产出带出处的选题判断；不要凭记忆编造数据或链接。',
+    tools: ['fs.read', 'fs.list', 'http.fetch'],
+    maxOutputTokens: 2048,
+  },
+  {
+    id: 'researcher',
+    systemPrompt:
+      '你是资料研究员。先用 http.fetch 抓取给定链接，再逐条提炼可核查的事实，每条都写清来源 URL；找不到原文支持时必须降低 confidence。',
+    tools: ['fs.read', 'fs.list', 'http.fetch'],
+    maxOutputTokens: 2048,
+  },
+  {
+    id: 'director',
+    systemPrompt: '你是导演助理。把脚本拆成镜头清单，给出景别、画面、B-roll 与上屏字幕，不写正文。',
+    tools: ['fs.read', 'fs.list'],
+    maxOutputTokens: 2048,
+  },
+  {
+    id: 'packager',
+    systemPrompt: '你是包装编辑。负责标题候选、简介、标签、章节与封面 brief；遵循平台规则，不承诺自动发布。',
+    tools: ['fs.read'],
+    maxOutputTokens: 1536,
   },
 ];
 
@@ -159,6 +225,49 @@ function registerFileTools(host: ToolHost, workspaceRoot: string): void {
   host.register(read);
   host.register(write);
   host.register(del);
+  registerResearchTools(host, workspaceRoot);
+}
+
+/**
+ * Tools for the research stage. `fs.list` is a read-only map of one workspace
+ * directory; `http.fetch` goes through the guarded fetcher so an agent cannot
+ * use it to reach loopback services or internal networks.
+ */
+function registerResearchTools(host: ToolHost, workspaceRoot: string): void {
+  // No `pathArg` here on purpose: ToolHost's path sandbox requires a path, which
+  // would make "list the workspace root" impossible. `listDirectory` applies
+  // `resolveInsideWorkspace` itself, which is the other accepted sandbox shape.
+  const list: ToolDefinition<{ path?: string; limit?: number }, { path: string; entries: ListEntry[]; truncated: boolean }> = {
+    name: 'fs.list',
+    risk: 'low',
+    approvalKind: null,
+    inputSchema: (input) => {
+      const record = typeof input === 'object' && input !== null ? (input as Record<string, unknown>) : {};
+      const path = record.path === undefined ? '' : record.path;
+      if (typeof path !== 'string') throw new ToolError('INVALID_INPUT', 'path must be a string');
+      const limit = typeof record.limit === 'number' ? Math.min(Math.max(Math.trunc(record.limit), 1), 500) : 200;
+      return { path, limit };
+    },
+    execute: async (input) => listDirectory(input.path ?? '', { workspaceRoot, limit: input.limit ?? 200 }),
+  };
+
+  const fetchTool: ToolDefinition<{ url: string }, { url: string; title: string; text: string; truncated: boolean }> = {
+    name: 'http.fetch',
+    risk: 'medium',
+    approvalKind: null,
+    inputSchema: (input) => {
+      const url = typeof input === 'object' && input !== null ? (input as Record<string, unknown>).url : undefined;
+      if (typeof url !== 'string' || url.trim() === '') throw new ToolError('INVALID_INPUT', 'url required');
+      return { url };
+    },
+    execute: async (input) => {
+      const page = await fetchPage(input.url);
+      return { url: page.finalUrl, title: page.title, text: page.text, truncated: page.truncated };
+    },
+  };
+
+  host.register(list as never);
+  host.register(fetchTool as never);
 }
 
 export async function createDaemon(options: DaemonOptions): Promise<Daemon> {
@@ -171,8 +280,16 @@ export async function createDaemon(options: DaemonOptions): Promise<Daemon> {
   const artifactStore = new SqliteArtifactStore(db, options.workspaceRoot);
   const settingsStore = new SqliteSettingsStore(db);
   const automationStore = new SqliteAutomationStore(db);
+  // Nothing can still be running at construction time, so any `running` row is a
+  // leftover from a process that died mid-generation. Correcting it once here
+  // keeps the UI honest without a lazy repair on every read.
+  automationStore.recoverInterruptedRuns();
   const metricsStore = new SqliteMetricsStore(db);
   const clock = options.now ?? (() => new Date());
+  const styleStore = new SqliteStyleStore(db, 'local-user', () => clock());
+  const scenarioStore = new SqliteScenarioStore(db, () => clock());
+  // Built-in packs are code-defined and refreshed each boot; user packs are left alone.
+  scenarioStore.seedBuiltins();
 
   // Retrieval prefers the provider's `/embeddings`; the probe runs lazily on the
   // first index call and the chosen provider is then stable for this process. Rows
@@ -221,7 +338,12 @@ export async function createDaemon(options: DaemonOptions): Promise<Daemon> {
   const agents = options.agents ?? DEFAULT_AGENTS;
   const grants = options.grants ?? [
     { id: 'g-read', deviceId: options.deviceId, tool: 'fs.read', scope: '**', mode: 'auto' },
+    { id: 'g-list', deviceId: options.deviceId, tool: 'fs.list', scope: '**', mode: 'auto' },
     { id: 'g-write', deviceId: options.deviceId, tool: 'fs.write', scope: '**', mode: 'auto' },
+    // Outbound fetch is allowed by default because every call passes the SSRF,
+    // robots and size guards; the audit trail still records each target.
+    { id: 'g-fetch', deviceId: options.deviceId, tool: 'http.fetch', scope: 'https://**', mode: 'auto' },
+    { id: 'g-fetch-http', deviceId: options.deviceId, tool: 'http.fetch', scope: 'http://**', mode: 'auto' },
     { id: 'g-delete', deviceId: options.deviceId, tool: 'fs.delete', scope: '**', mode: 'ask' },
   ];
 
@@ -304,6 +426,13 @@ function isAutomationKind(value: string): value is 'topic-card' | 'research-note
     'library',
     'resume',
     'memory',
+    'styles',
+    'subtitle',
+    'review',
+    'sources',
+    'exportPolicy',
+    'scenarios',
+    'entities',
   ] as const;
   const startedAt = Date.now();
 
@@ -330,7 +459,22 @@ function isAutomationKind(value: string): value is 'topic-card' | 'research-note
     options.secretStore?.delete(id);
   };
 
+  const INDEXED_KINDS = new Set([
+    'topic-card',
+    'research-notes',
+    'script',
+    'shot-list',
+    'publish-pack',
+    'review-report',
+    'outline',
+    'chapter',
+  ]);
+
   const indexArtifact = async (artifact: { id: string; projectId: string; kind: string; path: string }): Promise<void> => {
+    // Only knowledge artifacts are indexed. Subtitle/SRT is a derived rendering of
+    // the script (indexing it would duplicate every sentence), and image/audio/other
+    // carry no text the model could quote.
+    if (!INDEXED_KINDS.has(artifact.kind)) return;
     try {
       const detail = artifactStore.read(artifact.id);
       if (detail === null) return;
@@ -357,6 +501,58 @@ function isAutomationKind(value: string): value is 'topic-card' | 'research-note
     workspaceRoot: options.workspaceRoot,
     retrieve: retrieveFromMemory,
     onArtifactSaved: indexArtifact,
+  };
+
+  /**
+   * Banned-word scan over the two artifacts that ship to the audience: the latest
+   * script and the latest publish pack (titles/description/tags also get published).
+   */
+  const styleLintFor = (
+    projectId: string,
+  ): { bannedWords: string[]; hits: Array<{ word: string; count: number }> } | null => {
+    const project = projectStore.get(projectId);
+    if (project === null || project.styleProfileId === null) return null;
+    const profile = styleStore.get(project.styleProfileId);
+    if (profile === null) return null;
+    const totals = new Map<string, number>();
+    for (const kind of ['script', 'publish-pack'] as const) {
+      const latest = artifactStore.latest(projectId, kind);
+      if (latest === null) continue;
+      for (const hit of lintBannedWords(latest.content, profile.bannedWords)) {
+        totals.set(hit.word, (totals.get(hit.word) ?? 0) + hit.count);
+      }
+    }
+    return {
+      bannedWords: profile.bannedWords,
+      hits: [...totals.entries()].map(([word, count]) => ({ word, count })),
+    };
+  };
+
+  const checklistFor = (projectId: string): ReturnType<typeof buildChecklist> => {
+    const artifacts = artifactStore.list(projectId);
+    const lint = styleLintFor(projectId);
+    const checked = artifacts.some(
+      (artifact) => artifact.kind === 'script' || artifact.kind === 'publish-pack',
+    );
+    const project = projectStore.get(projectId);
+    const pack = project === null ? null : scenarioStore.get(project.scenarioId);
+    return buildChecklist(artifacts, {
+      style: lint === null ? null : { ...lint, checked },
+      entityCounts: scenarioStore.countCards(projectId),
+      scenario:
+        pack === null
+          ? null
+          : {
+              stages: pack.stages.map((stage) => ({
+                key: stage.key,
+                label: stage.label,
+                required: stage.required,
+                produces: stage.produces,
+                ...(stage.view === undefined ? {} : { view: stage.view }),
+                ...(stage.entityType === undefined ? {} : { entityType: stage.entityType }),
+              })),
+            },
+    });
   };
 
   const appendRunEvent = (runId: string, type: 'error' | 'run.finished' | 'budget.warning', payload: unknown): void => {
@@ -445,35 +641,46 @@ function isAutomationKind(value: string): value is 'topic-card' | 'research-note
 
   app.post('/v1/projects', async (request, reply) => {
     const body = request.body as
-      | { title?: unknown; platform?: unknown; description?: unknown; tags?: unknown }
+      | { title?: unknown; platform?: unknown; description?: unknown; tags?: unknown; scenarioId?: unknown }
       | undefined;
     if (typeof body?.title !== 'string' || body.title.trim() === '') {
       return reply.code(400).send({ error: { code: 'INVALID_INPUT', message: 'title is required' } });
     }
-    const platform = typeof body.platform === 'string' ? body.platform : 'generic';
-    if (!['bilibili', 'youtube', 'xiaohongshu', 'generic'].includes(platform)) {
-      return reply.code(400).send({ error: { code: 'INVALID_INPUT', message: 'unknown platform' } });
+    // A project must belong to a scenario: the pack decides its stages and cards.
+    const scenarioId = typeof body.scenarioId === 'string' && body.scenarioId !== '' ? body.scenarioId : 'video';
+    const pack = scenarioStore.get(scenarioId);
+    if (pack === null) {
+      return reply.code(400).send({ error: { code: 'UNKNOWN_SCENARIO', message: `no scenario pack ${scenarioId}` } });
     }
+    const platform =
+      typeof body.platform === 'string' && ['bilibili', 'youtube', 'xiaohongshu', 'generic'].includes(body.platform)
+        ? body.platform
+        : pack.defaultPlatform;
     const tags = Array.isArray(body.tags)
       ? body.tags.filter((tag): tag is string => typeof tag === 'string').slice(0, 12)
       : [];
+    const firstStage = pack.stages[0]?.key ?? 'topic';
     const project = projectStore.create({
       id: randomUUID(),
       ownerId: 'local-user',
       title: body.title.trim(),
       platform: platform as 'bilibili',
       workspacePath: options.workspaceRoot,
+      scenarioId: pack.id,
+      stage: firstStage,
       ...(typeof body.description === 'string' ? { description: body.description } : {}),
       tags,
     });
-    return reply.code(201).send({ project });
+    return reply.code(201).send({ project, scenario: pack });
   });
 
   app.get('/v1/projects', async (request) => {
     const query = request.query as { q?: string; includeDeleted?: string };
     const needle = (query.q ?? '').trim().toLowerCase();
     const includeDeleted = query.includeDeleted === '1';
-    const projects = projectStore.list();
+    // `includeDeleted=1` used to be parsed and then ignored, so a soft-deleted
+    // project could never be found again from the UI. Honour it now.
+    const projects = projectStore.listWithDeleted(includeDeleted);
     const filtered =
       needle === ''
         ? projects
@@ -490,10 +697,14 @@ function isAutomationKind(value: string): value is 'topic-card' | 'research-note
     const project = projectStore.get(id);
     if (project === null) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: id } });
     const artifacts = artifactStore.list(id);
+    const cardCounts = scenarioStore.countCards(id);
     return {
       project,
       stats: {
         artifacts: artifacts.length,
+        // Card-based projects keep their work in entity cards, not artifacts; the
+        // workspace headline reads "0 个产物" otherwise even with nine chapters.
+        cards: Object.values(cardCounts).reduce((sum, count) => sum + count, 0),
         runs: (db.prepare('SELECT COUNT(*) AS c FROM runs WHERE project_id = ?').get(id) as { c: number }).c,
         tokens: (
           db.prepare('SELECT COALESCE(SUM(used_tokens),0) AS c FROM runs WHERE project_id = ?').get(id) as {
@@ -506,7 +717,7 @@ function isAutomationKind(value: string): value is 'topic-card' | 'research-note
           }
         ).c,
       },
-      checklist: buildChecklist(artifacts),
+      checklist: checklistFor(id),
     };
   });
 
@@ -522,6 +733,11 @@ function isAutomationKind(value: string): value is 'topic-card' | 'research-note
     if (body.title !== undefined && (typeof body.title !== 'string' || body.title.trim() === '')) {
       return reply.code(400).send({ error: { code: 'INVALID_INPUT', message: 'title must be non-empty' } });
     }
+    if (body.styleProfileId !== undefined && body.styleProfileId !== null) {
+      if (typeof body.styleProfileId !== 'string' || styleStore.get(body.styleProfileId) === null) {
+        return reply.code(400).send({ error: { code: 'INVALID_INPUT', message: 'unknown styleProfileId' } });
+      }
+    }
     const project = projectStore.update(id, {
       ...(typeof body.title === 'string' ? { title: body.title.trim() } : {}),
       ...(typeof body.platform === 'string' ? { platform: body.platform as 'bilibili' } : {}),
@@ -529,6 +745,9 @@ function isAutomationKind(value: string): value is 'topic-card' | 'research-note
       ...(Array.isArray(body.tags)
         ? { tags: body.tags.filter((tag): tag is string => typeof tag === 'string').slice(0, 12) }
         : {}),
+      ...(body.styleProfileId === undefined
+        ? {}
+        : { styleProfileId: typeof body.styleProfileId === 'string' ? body.styleProfileId : null }),
     });
     if (project === null) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: id } });
     return { project };
@@ -559,6 +778,15 @@ function isAutomationKind(value: string): value is 'topic-card' | 'research-note
     }
     const project = projectStore.get(id);
     if (project === null) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: id } });
+    // The stage must exist in this project's own pack: a typo would otherwise park
+    // the project on a stage the UI cannot render.
+    const pack = scenarioStore.get(project.scenarioId);
+    if (pack === null || !pack.stages.some((stage) => stage.key === parsed.data)) {
+      return reply.code(400).send({
+        error: { code: 'UNKNOWN_STAGE', message: `stage ${parsed.data} is not part of scenario ${project.scenarioId}` },
+        available: pack?.stages.map((stage) => stage.key) ?? [],
+      });
+    }
     projectStore.advanceStage(id, parsed.data);
     return { project: projectStore.get(id) };
   });
@@ -643,6 +871,8 @@ function isAutomationKind(value: string): value is 'topic-card' | 'research-note
         'subtitle',
         'publish-pack',
         'review-report',
+        'outline',
+        'chapter',
         'image',
         'audio',
         'other',
@@ -680,14 +910,28 @@ function isAutomationKind(value: string): value is 'topic-card' | 'research-note
       return reply.code(404).send({ error: { code: 'NOT_FOUND', message: id } });
     }
     const body = request.body as
-      | { kind?: unknown; context?: unknown; includeUpstream?: unknown }
+      | { kind?: unknown; context?: unknown; includeUpstream?: unknown; sources?: unknown }
       | undefined;
     if (typeof body?.kind !== 'string' || !isGenerateKind(body.kind)) {
       return reply.code(400).send({ error: { code: 'INVALID_INPUT', message: 'unknown kind' } });
     }
+    // The review report has its own endpoint that also reads metrics and advances
+    // the stage. Keeping a second path here produced reports that claimed to be
+    // reviews but had no data behind them, so it is refused with a pointer.
+    if (body.kind === 'review-report') {
+      return reply.code(400).send({
+        error: {
+          code: 'USE_REVIEW_ENDPOINT',
+          message: 'use POST /v1/projects/:id/review so metrics and stage advancement are included',
+        },
+      });
+    }
     if (typeof body.context !== 'string' || body.context.trim() === '') {
       return reply.code(400).send({ error: { code: 'INVALID_INPUT', message: 'context is required' } });
     }
+    const requestSources = Array.isArray(body.sources)
+      ? body.sources.filter((url): url is string => typeof url === 'string').slice(0, MAX_SOURCES)
+      : [];
 
     // Generation costs real money, so it gets a Run row like any other model work:
     // the usage dashboard and the monthly budget both read from `runs`.
@@ -718,12 +962,79 @@ function isAutomationKind(value: string): value is 'topic-card' | 'research-note
 
     let tokens = 0;
     let cost = 0;
+    const attachedStyle =
+      project.styleProfileId === null ? null : styleStore.get(project.styleProfileId);
+
+    // The stage that produces this kind decides the scenario instruction: a novel
+    // outline and a video script share the same endpoint but not the same brief.
+    const projectPack = scenarioStore.get(project.scenarioId);
+    const requestedKind: string = body.kind;
+    const stageHint =
+      projectPack?.stages.find((stage) => (stage.produces as readonly string[]).includes(requestedKind))
+        ?.promptHint ?? '';
+
+    // Research is the only stage that may reach the network. Sources are fetched
+    // (with SSRF/robots/size guards) before the model call, and the resulting text
+    // enters the prompt fenced. A failed fetch is reported, never papered over.
+    let research: ResearchBundle | null = null;
+    if (body.kind === 'research-notes' && requestSources.length > 0) {
+      research = await gatherSources(requestSources, {
+        ...(options.fetchImpl === undefined ? {} : { fetchImpl: options.fetchImpl }),
+        ...(options.lookup === undefined ? {} : { lookup: options.lookup }),
+      });
+      if (research.sources.length === 0) {
+        runStore.patchRun(runId, {
+          status: 'failed',
+          endedAt: clock().toISOString(),
+          error: {
+            code: 'SOURCES_UNREACHABLE',
+            message: research.failures.map((failure) => `${failure.code} ${failure.url}`).join('; '),
+            retryable: true,
+          },
+        });
+        return reply.code(502).send({
+          error: { code: 'SOURCES_UNREACHABLE', message: 'none of the supplied sources could be fetched' },
+          failures: research.failures,
+        });
+      }
+    }
+
     try {
       const result = await generateArtifact(generateDeps, {
         projectId: id,
         kind: body.kind,
         context: body.context,
         includeUpstream: body.includeUpstream !== false,
+        ...(attachedStyle === null
+          ? {}
+          : {
+              style: {
+                name: attachedStyle.name,
+                tone: attachedStyle.tone,
+                audience: attachedStyle.audience,
+                bannedWords: attachedStyle.bannedWords,
+                notes: attachedStyle.notes,
+              },
+            }),
+        ...(stageHint === '' ? {} : { scenarioHint: stageHint }),
+        ...(research === null
+          ? {}
+          : {
+              extraContext: research.promptBlock,
+              refine: (payload: unknown) => {
+                const verified = verifyNotes(payload as ResearchNotes, research.pages);
+                return {
+                  payload: { ...(payload as ResearchNotes), notes: verified.notes },
+                  meta: {
+                    sources: research.sources,
+                    failures: research.failures,
+                    unverified: verified.unverified,
+                    downgraded: verified.downgraded,
+                  },
+                };
+              },
+              appendMarkdown: renderSourceLedger(research),
+            }),
         onUsage: (usage) => {
           tokens += usage.inputTokens + usage.outputTokens;
           if (profile !== undefined) {
@@ -740,15 +1051,16 @@ function isAutomationKind(value: string): value is 'topic-card' | 'research-note
         // Budget columns are reporting only here; never fail a finished artifact.
       }
       appendRunEvent(runId, 'run.finished', { status: 'succeeded', kind: body.kind, tokens });
-      const stageFor: Record<string, 'topic' | 'research' | 'script' | 'shotlist' | 'package'> = {
-        'topic-card': 'topic',
-        'research-notes': 'research',
-        script: 'script',
-        'shot-list': 'shotlist',
-        'publish-pack': 'package',
-      };
-      const nextStage = stageFor[body.kind];
-      if (nextStage !== undefined) projectStore.advanceStageIfBehind(id, nextStage);
+      // Advance to the first stage in THIS project's pack that produces this kind.
+      const packForAdvance = scenarioStore.get(project.scenarioId);
+      if (packForAdvance !== null) {
+        const order = packForAdvance.stages.map((stage) => stage.key);
+        const producedKind = body.kind;
+        const nextStage = packForAdvance.stages.find((stage) =>
+          (stage.produces as readonly string[]).includes(producedKind),
+        )?.key;
+        if (nextStage !== undefined) projectStore.advanceStageIfBehind(id, nextStage, order);
+      }
       return reply.code(201).send({ ...result, runId });
     } catch (error) {
       const code = error instanceof ModelOutputError ? 'MODEL_BAD_OUTPUT' : ((error as { code?: string }).code ?? 'MODEL_ERROR');
@@ -772,8 +1084,7 @@ function isAutomationKind(value: string): value is 'topic-card' | 'research-note
     if (projectStore.get(id) === null) {
       return reply.code(404).send({ error: { code: 'NOT_FOUND', message: id } });
     }
-    const artifacts = artifactStore.list(id);
-    const items = buildChecklist(artifacts);
+    const items = checklistFor(id);
     return {
       items,
       ready: items.filter((item) => item.required).every((item) => item.ok),
@@ -790,7 +1101,7 @@ function isAutomationKind(value: string): value is 'topic-card' | 'research-note
     }
 
     const artifacts = artifactStore.list(id);
-    const items = buildChecklist(artifacts);
+    const items = checklistFor(id);
     const missing = items.filter((item) => item.required && !item.ok).map((item) => item.key);
     if (missing.length > 0) {
       return reply.code(409).send({
@@ -801,9 +1112,24 @@ function isAutomationKind(value: string): value is 'topic-card' | 'research-note
 
     const entries: Array<{ name: string; content: Buffer }> = [];
     let totalBytes = 0;
+    // A publish pack is the cut that goes out, not the edit history. Export only
+    // the newest artifact of each kind unless the caller explicitly asks for all
+    // versions (useful for archival). Grouping by kind keeps every stage present
+    // even when two kinds share a folder.
+    const includeHistory = (request.body as { includeHistory?: unknown } | undefined)?.includeHistory === true;
+    const newestByKind = new Map<string, Artifact>();
+    for (const artifact of artifacts) {
+      if (!isExportableKind(artifact.kind)) continue;
+      if (includeHistory) continue;
+      const current = newestByKind.get(artifact.kind);
+      if (current === undefined || artifact.createdAt > current.createdAt) newestByKind.set(artifact.kind, artifact);
+    }
+    const selected = includeHistory
+      ? artifacts.filter((artifact) => isExportableKind(artifact.kind))
+      : [...newestByKind.values()];
+
     try {
-      for (const artifact of artifacts) {
-        if (!isExportableKind(artifact.kind)) continue;
+      for (const artifact of selected) {
         const detail = artifactStore.read(artifact.id);
         if (detail === null) continue;
         const safeName = resolveRelativeName(artifact.path);
@@ -814,7 +1140,7 @@ function isAutomationKind(value: string): value is 'topic-card' | 'research-note
         }
         entries.push({ name: safeName, content: buffer });
       }
-      const summary = buildPublishSummary(artifacts);
+      const summary = buildPublishSummary(selected);
       if (summary !== null) entries.push({ name: 'README.md', content: Buffer.from(summary, 'utf8') });
       // Manifest makes the export reproducible and attributable: every file's
       // hash plus the source artifact id, so a zip can be verified later.
@@ -824,10 +1150,11 @@ function isAutomationKind(value: string): value is 'topic-card' | 'research-note
           JSON.stringify(
             {
               generator: 'creator-studio',
-              version: '0.2.0',
+              version: DAEMON_VERSION,
               projectId: id,
               projectTitle: projectStore.get(id)?.title ?? '',
               exportedAt: clock().toISOString(),
+              includeHistory,
               files: entries.map((entry) => ({
                 name: entry.name,
                 bytes: entry.content.length,
@@ -853,11 +1180,28 @@ function isAutomationKind(value: string): value is 'topic-card' | 'research-note
     const zip = buildZip(entries);
     writeFileSync(outPath, zip);
 
+    // A successful export is the "published" milestone: the pack exists, so the
+    // pipeline can move past packaging instead of sitting there forever.
+    const publishedPack = scenarioStore.get(projectStore.get(id)?.scenarioId ?? 'video');
+    if (publishedPack !== null) {
+      // Packs name their publishing stage differently (`published`, `submitted`…);
+      // find it by view first so a custom pack still advances after an export.
+      const publishStage =
+        publishedPack.stages.find((stage) => stageView(stage) === 'publish')?.key ?? 'published';
+      projectStore.advanceStageIfBehind(
+        id,
+        publishStage,
+        publishedPack.stages.map((stage) => stage.key),
+      );
+    }
+
     return reply.code(201).send({
       file: `publish-exports/${fileName}`,
       absolutePath: outPath,
       bytes: zip.length,
       entries: entries.map((entry) => entry.name),
+      includeHistory,
+      stage: projectStore.get(id)?.stage ?? 'published',
       checklist: items,
     });
   });
@@ -1070,6 +1414,697 @@ function isAutomationKind(value: string): value is 'topic-card' | 'research-note
 
   app.get('/v1/settings/defaults', async () => ({ budget: { ...DEFAULT_BUDGET } }));
 
+  // ------------------------------------------------------------- scenarios
+
+  app.get('/v1/scenarios', async () => ({
+    scenarios: scenarioStore.list(),
+    defaultId: 'video',
+    engine: { packFormat: PACK_FORMAT_VERSION, views: [...STAGE_VIEWS] },
+  }));
+
+  app.get('/v1/scenarios/:scenarioId', async (request, reply) => {
+    const { scenarioId } = request.params as { scenarioId: string };
+    const pack = scenarioStore.get(scenarioId);
+    if (pack === null) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: scenarioId } });
+    return { scenario: pack };
+  });
+
+  app.post('/v1/scenarios', async (request, reply) => {
+    const body = request.body as Record<string, unknown> | undefined;
+    if (body === undefined) {
+      return reply.code(400).send({ error: { code: 'INVALID_INPUT', message: 'body required' } });
+    }
+    // Built-ins cannot be overwritten through this route; that keeps `video` stable
+    // for every existing project. A user can always create a new id.
+    const candidate = { ...body, builtin: false };
+    const parsed = ScenarioPackSchema.safeParse(candidate);
+    if (!parsed.success) {
+      return reply.code(400).send({
+        error: { code: 'INVALID_SCENARIO', message: parsed.error.issues.map((issue) => issue.message).join('; ') },
+      });
+    }
+    try {
+      const saved = scenarioStore.save(parsed.data);
+      return reply.code(201).send({ scenario: saved });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes('BUILTIN_READONLY')) {
+        return reply.code(409).send({ error: { code: 'BUILTIN_READONLY', message: 'built-in packs cannot be edited' } });
+      }
+      if (message.includes('UNSUPPORTED_VIEW')) {
+        return reply.code(400).send({
+          error: { code: 'UNSUPPORTED_VIEW', message },
+          supportedViews: [...STAGE_VIEWS],
+        });
+      }
+      if (message.includes('BAD_INHERITANCE')) {
+        return reply.code(400).send({ error: { code: 'BAD_INHERITANCE', message } });
+      }
+      return reply.code(400).send({ error: { code: 'INVALID_SCENARIO', message } });
+    }
+  });
+
+  /** Export exactly what is stored, so an import can reproduce it. */
+  app.get('/v1/scenarios/:scenarioId/export', async (request, reply) => {
+    const { scenarioId } = request.params as { scenarioId: string };
+    const stored = scenarioStore.getStored(scenarioId);
+    if (stored === null) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: scenarioId } });
+    return {
+      pack: stored,
+      exportedAt: clock().toISOString(),
+      engine: { packFormat: PACK_FORMAT_VERSION, views: [...STAGE_VIEWS] },
+    };
+  });
+
+  /** Import a previously exported pack; reported issues never mutate the database. */
+  app.post('/v1/scenarios/import', async (request, reply) => {
+    const body = request.body as { pack?: unknown } | undefined;
+    if (body?.pack === undefined) {
+      return reply.code(400).send({ error: { code: 'INVALID_INPUT', message: 'pack required' } });
+    }
+    const parsed = ScenarioPackSchema.safeParse({ ...(body.pack as Record<string, unknown>), builtin: false });
+    if (!parsed.success) {
+      // An unknown view is the one schema error a pack author can fix by looking at
+      // the engine's vocabulary, so it gets its own code and the list.
+      const unknownView = parsed.error.issues.some(
+        (issue) => issue.code === 'invalid_enum_value' && issue.path.includes('view'),
+      );
+      return reply.code(400).send({
+        error: {
+          code: unknownView ? 'UNSUPPORTED_VIEW' : 'INVALID_SCENARIO',
+          message: parsed.error.issues.map((issue) => issue.message).join('; '),
+        },
+        supportedViews: [...STAGE_VIEWS],
+      });
+    }
+    const negotiation = negotiatePack(parsed.data, STAGE_VIEWS);
+    if (!negotiation.ok) {
+      return reply.code(400).send({
+        error: { code: 'UNSUPPORTED_VIEW', message: `pack needs ${negotiation.missingViews.join(', ')}` },
+        supportedViews: [...STAGE_VIEWS],
+      });
+    }
+    try {
+      const saved = scenarioStore.save(parsed.data);
+      return reply.code(201).send({ scenario: saved });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes('UNSUPPORTED_VIEW')) {
+        return reply.code(400).send({
+          error: { code: 'UNSUPPORTED_VIEW', message },
+          supportedViews: [...STAGE_VIEWS],
+        });
+      }
+      if (message.includes('BAD_INHERITANCE')) {
+        return reply.code(400).send({ error: { code: 'BAD_INHERITANCE', message } });
+      }
+      return reply.code(400).send({ error: { code: 'INVALID_SCENARIO', message } });
+    }
+  });
+
+  app.delete('/v1/scenarios/:scenarioId', async (request, reply) => {
+    const { scenarioId } = request.params as { scenarioId: string };
+    const result = scenarioStore.delete(scenarioId);
+    if (result === 'not-found') return reply.code(404).send({ error: { code: 'NOT_FOUND', message: scenarioId } });
+    if (result === 'builtin') {
+      return reply.code(409).send({ error: { code: 'BUILTIN_READONLY', message: 'built-in packs cannot be deleted' } });
+    }
+    return { deleted: scenarioId };
+  });
+
+  // ---------------------------------------------------------------- entities
+
+  const projectScenario = (projectId: string): ScenarioPack | null => {
+    const project = projectStore.get(projectId);
+    if (project === null) return null;
+    return scenarioStore.get(project.scenarioId);
+  };
+
+  app.get('/v1/projects/:id/entities', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    if (projectStore.get(id) === null) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: id } });
+    const query = request.query as { type?: string };
+    const cards = scenarioStore.listCards(id, query.type === undefined || query.type === '' ? undefined : query.type);
+    const counts = scenarioStore.countCards(id);
+    // The board needs to know which select field supplies its columns; the editor
+    // needs the card type's field schema. Returning them here saves the UI from
+    // stitching three endpoints together for one screen.
+    const pack = projectScenario(id);
+    const entityTypeKey = query.type ?? '';
+    const entityType = pack?.entityTypes.find((candidate) => candidate.key === entityTypeKey);
+    const boardStage = pack?.stages.find(
+      (stage) => stageView(stage) === 'board' && stage.entityType === entityTypeKey,
+    );
+    const documentStage = pack?.stages.find(
+      (stage) => stageView(stage) === 'document' && stage.entityType === entityTypeKey,
+    );
+    return {
+      cards,
+      counts,
+      ...(entityType === undefined ? {} : { entityType }),
+      ...(boardStage?.board === undefined ? {} : { board: boardStage.board }),
+      ...(documentStage === undefined
+        ? {}
+        : {
+            document: {
+              stage: documentStage.key,
+              label: documentStage.label,
+              ...(documentStage.document ?? {}),
+            },
+          }),
+    };
+  });
+
+  app.post('/v1/projects/:id/entities', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const pack = projectScenario(id);
+    if (pack === null) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: id } });
+    const parsed = EntityCardInputSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({
+        error: { code: 'INVALID_CARD', message: parsed.error.issues.map((issue) => issue.message).join('; ') },
+      });
+    }
+    const entityType = pack.entityTypes.find((candidate) => candidate.key === parsed.data.type);
+    const check = validateCardAgainstType(parsed.data, entityType);
+    if (!check.ok) return reply.code(400).send({ error: { code: 'INVALID_CARD', message: check.message } });
+    const card = scenarioStore.createCard(id, parsed.data);
+    return reply.code(201).send({ card });
+  });
+
+  app.patch('/v1/projects/:id/entities/:cardId', async (request, reply) => {
+    const { id, cardId } = request.params as { id: string; cardId: string };
+    const pack = projectScenario(id);
+    if (pack === null) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: id } });
+    const existing = scenarioStore.getCard(id, cardId);
+    if (existing === null) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: cardId } });
+    const merged = {
+      type: existing.type,
+      title: existing.title,
+      fields: existing.fields,
+      body: existing.body,
+      tags: existing.tags,
+      ...(request.body as Record<string, unknown>),
+    };
+    const parsed = EntityCardInputSchema.safeParse(merged);
+    if (!parsed.success) {
+      return reply.code(400).send({
+        error: { code: 'INVALID_CARD', message: parsed.error.issues.map((issue) => issue.message).join('; ') },
+      });
+    }
+    const entityType = pack.entityTypes.find((candidate) => candidate.key === parsed.data.type);
+    const check = validateCardAgainstType(parsed.data, entityType);
+    if (!check.ok) return reply.code(400).send({ error: { code: 'INVALID_CARD', message: check.message } });
+    // Drag-and-drop moves a card within its column, which is the card's own
+    // position — not a field value — so it rides alongside the parsed payload.
+    const rawOrder = (request.body as Record<string, unknown>).order;
+    const order =
+      typeof rawOrder === 'number' && Number.isInteger(rawOrder) && rawOrder >= 0 ? rawOrder : undefined;
+    const card = scenarioStore.updateCard(id, cardId, {
+      ...parsed.data,
+      ...(order === undefined ? {} : { order }),
+    });
+    return card === null ? reply.code(404).send({ error: { code: 'NOT_FOUND', message: cardId } }) : { card };
+  });
+
+  /** Whole-project card graph, for the relation view. */
+  app.get('/v1/projects/:id/graph', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    if (projectStore.get(id) === null) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: id } });
+    const project = projectStore.get(id);
+    const pack = project === null ? null : scenarioStore.get(project.scenarioId);
+    return {
+      ...scenarioStore.projectGraph(id),
+      entityTypes: pack?.entityTypes ?? [],
+      relationTypes: pack?.relationTypes ?? [],
+    };
+  });
+
+  /**
+   * Foreshadowing health. A writer's real question is not "what links exist" but
+   * "which threads are still open, and did I wait too long" — so this reports the gap
+   * in chapters between planting and payoff, and flags anything left open.
+   */
+  app.get('/v1/projects/:id/foreshadow-health', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const project = projectStore.get(id);
+    if (project === null) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: id } });
+    const pack = scenarioStore.get(project.scenarioId);
+    const cards = scenarioStore.listCards(id);
+    const relations = scenarioStore.listRelationsForProject(id);
+    const chapters = cards.filter((card) => card.type === 'chapter');
+    const chapterOrder = new Map<string, number>();
+    chapters.forEach((chapter) => {
+      // Chapter cards carry their own position; fall back to creation order so a card
+      // without a number still sorts deterministically instead of jumping around.
+      const raw = chapter.fields['number'] ?? chapter.fields['order'] ?? '';
+      const parsed = Number.parseInt(raw, 10);
+      chapterOrder.set(chapter.id, Number.isNaN(parsed) ? chapters.indexOf(chapter) : parsed);
+    });
+
+    const open: Array<{
+      cardId: string;
+      title: string;
+      status: string;
+      plantedAt: string;
+      plantedChapter: number | null;
+      lastChapter: number | null;
+      gapChapters: number | null;
+      note: string;
+    }> = [];
+
+    for (const card of cards.filter((candidate) => candidate.type === 'foreshadow')) {
+      const outbound = relations.filter((relation) => relation.from === card.id);
+      const plant = outbound.find((relation) => relation.relationType === 'plants');
+      const payoffs = outbound.filter((relation) => relation.relationType === 'pays-off');
+      const status = card.fields['status'] ?? '';
+      const plantedChapter = plant === undefined ? null : (chapterOrder.get(plant.to) ?? null);
+      const payoffChapters = payoffs
+        .map((relation) => chapterOrder.get(relation.to) ?? null)
+        .filter((value): value is number => value !== null);
+      const lastChapter = payoffChapters.length === 0 ? null : Math.max(...payoffChapters);
+      const gap = plantedChapter !== null && lastChapter !== null ? lastChapter - plantedChapter : null;
+      const resolved = payoffs.length > 0 || status === '已回收';
+      if (resolved && gap !== null && gap > 12) {
+        open.push({
+          cardId: card.id,
+          title: card.title,
+          status,
+          plantedAt: card.fields['planted_at'] ?? '',
+          plantedChapter,
+          lastChapter,
+          gapChapters: gap,
+          note: `埋了 ${gap} 章才回收，读者可能已经忘了`,
+        });
+      } else if (!resolved) {
+        open.push({
+          cardId: card.id,
+          title: card.title,
+          status,
+          plantedAt: card.fields['planted_at'] ?? '',
+          plantedChapter,
+          lastChapter,
+          gapChapters: gap,
+          note: plantedChapter === null ? '还没有连到埋设章节' : '还没有回收',
+        });
+      }
+    }
+
+    return {
+      total: cards.filter((candidate) => candidate.type === 'foreshadow').length,
+      open: open.length,
+      paidOff: cards.filter((candidate) => candidate.type === 'foreshadow').length - open.length,
+      items: open,
+      relationTypes: pack?.relationTypes ?? [],
+    };
+  });
+
+  app.get('/v1/projects/:id/entities/:cardId/links', async (request, reply) => {
+    const { id, cardId } = request.params as { id: string; cardId: string };
+    if (projectStore.get(id) === null) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: id } });
+    const card = scenarioStore.cardWithLinks(id, cardId);
+    if (card === null) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: cardId } });
+    return { card };
+  });
+
+  app.post('/v1/projects/:id/entities/:cardId/links', async (request, reply) => {
+    const { id, cardId } = request.params as { id: string; cardId: string };
+    if (projectStore.get(id) === null) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: id } });
+    const parsed = RelationInputSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({
+        error: { code: 'INVALID_RELATION', message: parsed.error.issues.map((issue) => issue.message).join('; ') },
+      });
+    }
+    try {
+      const relation = scenarioStore.linkCards(
+        id,
+        cardId,
+        parsed.data.toCardId,
+        parsed.data.label,
+        parsed.data.relationType,
+      );
+      return reply.code(201).send({ relation });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes('SELF_LINK')) {
+        return reply.code(400).send({ error: { code: 'SELF_LINK', message: 'a card cannot link to itself' } });
+      }
+      if (message.includes('UNKNOWN_RELATION_TYPE')) {
+        return reply.code(400).send({
+          error: { code: 'UNKNOWN_RELATION_TYPE', message: 'relation type is not declared by this scenario' },
+        });
+      }
+      if (message.includes('RELATION_TYPE_MISMATCH')) {
+        return reply.code(400).send({
+          error: { code: 'RELATION_TYPE_MISMATCH', message: 'relation type does not allow these card types' },
+        });
+      }
+      if (message.includes('CARD_NOT_FOUND')) {
+        return reply.code(404).send({ error: { code: 'NOT_FOUND', message: parsed.data.toCardId } });
+      }
+      throw error;
+    }
+  });
+
+  app.delete('/v1/projects/:id/links/:relationId', async (request, reply) => {
+    const { id, relationId } = request.params as { id: string; relationId: string };
+    if (projectStore.get(id) === null) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: id } });
+    if (!scenarioStore.unlinkCards(id, relationId)) {
+      return reply.code(404).send({ error: { code: 'NOT_FOUND', message: relationId } });
+    }
+    return { deleted: relationId };
+  });
+
+  app.delete('/v1/projects/:id/entities/:cardId', async (request, reply) => {
+    const { id, cardId } = request.params as { id: string; cardId: string };
+    if (projectStore.get(id) === null) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: id } });
+    if (!scenarioStore.deleteCard(id, cardId)) {
+      return reply.code(404).send({ error: { code: 'NOT_FOUND', message: cardId } });
+    }
+    return { deleted: cardId };
+  });
+
+  // ------------------------------------------------------------ manuscript
+
+  /**
+   * The writing surface. Prose lives on cards, so "the manuscript" is a projection:
+   * pick the document stage's card type, order the cards, and read the configured
+   * prose field. Keeping the text on the card means one source of truth — editing a
+   * chapter in the desk and exporting the book can never disagree.
+   */
+  const manuscriptSource = (projectId: string): {
+    pack: ScenarioPack;
+    stageKey: string;
+    entityType: string;
+    config: DocumentConfig;
+    cards: ReturnType<typeof scenarioStore.listCards>;
+  } | null => {
+    const pack = projectScenario(projectId);
+    if (pack === null) return null;
+    const stage = pack.stages.find((candidate) => stageView(candidate) === 'document');
+    if (stage === undefined || stage.entityType === undefined) return null;
+    return {
+      pack,
+      stageKey: stage.key,
+      entityType: stage.entityType,
+      config: stage.document ?? {},
+      cards: scenarioStore.listCards(projectId, stage.entityType),
+    };
+  };
+
+  app.get('/v1/projects/:id/manuscript', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    if (projectStore.get(id) === null) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: id } });
+    const source = manuscriptSource(id);
+    if (source === null) {
+      return reply.code(404).send({
+        error: { code: 'NO_DOCUMENT_STAGE', message: 'this scenario has no writing stage' },
+      });
+    }
+    const chapters = collectChapters(source.cards, source.config);
+    const totalChars = chapters.reduce((sum, chapter) => sum + countChars(chapter.text), 0);
+    return {
+      stage: source.stageKey,
+      entityType: source.entityType,
+      config: source.config,
+      title: projectStore.get(id)?.title ?? '',
+      totalChars,
+      chapters: chapters.map((chapter) => ({
+        id: chapter.id,
+        title: chapter.title,
+        order: chapter.order,
+        chars: countChars(chapter.text),
+      })),
+    };
+  });
+
+  app.post('/v1/projects/:id/manuscript/export', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const project = projectStore.get(id);
+    if (project === null) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: id } });
+    const source = manuscriptSource(id);
+    if (source === null) {
+      return reply.code(404).send({
+        error: { code: 'NO_DOCUMENT_STAGE', message: 'this scenario has no writing stage' },
+      });
+    }
+    const chapters = collectChapters(source.cards, source.config);
+    if (chapters.length === 0) {
+      return reply.code(409).send({ error: { code: 'EMPTY_MANUSCRIPT', message: 'no cards with text yet' } });
+    }
+    const totalChars = chapters.reduce((sum, chapter) => sum + countChars(chapter.text), 0);
+    if (totalChars > MANUSCRIPT_MAX_CHARS) {
+      return reply.code(413).send({
+        error: { code: 'MANUSCRIPT_TOO_LARGE', message: `over ${MANUSCRIPT_MAX_CHARS} characters` },
+      });
+    }
+    const stem = source.config.fileStem ?? source.pack.id;
+    const markdown = buildMarkdown({ title: project.title, chapters });
+
+    try {
+      const docx = await buildDocx({ title: project.title, chapters });
+      const dir = join(options.workspaceRoot, 'projects', id, 'manuscript');
+      mkdirSync(dir, { recursive: true });
+      const docxPath = join(dir, `${stem}.docx`);
+      const mdPath = join(dir, `${stem}.md`);
+      writeFileSync(docxPath, docx);
+      writeFileSync(mdPath, markdown, 'utf8');
+      return reply.code(201).send({
+        file: `manuscript/${stem}.docx`,
+        markdownFile: `manuscript/${stem}.md`,
+        bytes: docx.length,
+        chapters: chapters.length,
+        chars: totalChars,
+        downloadUrl: `/v1/projects/${id}/manuscript/download/${stem}.docx`,
+      });
+    } catch (error) {
+      return reply.code(500).send({
+        error: { code: 'EXPORT_FAILED', message: error instanceof Error ? error.message : String(error) },
+      });
+    }
+  });
+
+  app.get('/v1/projects/:id/manuscript/download/:name', async (request, reply) => {
+    const { id, name } = request.params as { id: string; name: string };
+    if (projectStore.get(id) === null) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: id } });
+    // Only names this route writes itself may be read back: the regex admits no
+    // separator, dot segment or drive letter, so `name` cannot leave the manuscript
+    // directory the export just created.
+    if (!/^[a-z0-9][a-z0-9-]*\.(docx|md)$/.test(name)) {
+      return reply.code(400).send({ error: { code: 'INVALID_INPUT', message: 'unknown file' } });
+    }
+    const absolute = join(options.workspaceRoot, 'projects', id, 'manuscript', name);
+    if (!existsSync(absolute)) {
+      return reply.code(404).send({ error: { code: 'NOT_FOUND', message: name } });
+    }
+    const buffer = readFileSync(absolute);
+    return reply
+      .header('content-type', name.endsWith('.docx') ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' : 'text/markdown; charset=utf-8')
+      .header('content-disposition', `attachment; filename="${name}"`)
+      .send(buffer);
+  });
+
+  // ---------------------------------------------------------------- styles
+
+  app.get('/v1/styles', async () => ({ styles: styleStore.list() }));
+
+  app.post('/v1/styles', async (request, reply) => {
+    const body = request.body as
+      | { id?: unknown; name?: unknown; tone?: unknown; audience?: unknown; bannedWords?: unknown; notes?: unknown }
+      | undefined;
+    if (body === undefined || typeof body.name !== 'string' || body.name.trim() === '') {
+      return reply.code(400).send({ error: { code: 'INVALID_INPUT', message: 'name is required' } });
+    }
+    if (body.id !== undefined && typeof body.id !== 'string') {
+      return reply.code(400).send({ error: { code: 'INVALID_INPUT', message: 'id must be a string' } });
+    }
+    if (body.id !== undefined && styleStore.get(body.id) === null) {
+      return reply.code(404).send({ error: { code: 'NOT_FOUND', message: body.id } });
+    }
+    try {
+      const style = styleStore.save({
+        ...(typeof body.id === 'string' ? { id: body.id } : {}),
+        name: body.name,
+        tone: typeof body.tone === 'string' ? body.tone : '',
+        audience: typeof body.audience === 'string' ? body.audience : '',
+        bannedWords: Array.isArray(body.bannedWords)
+          ? body.bannedWords.filter((word): word is string => typeof word === 'string')
+          : [],
+        notes: typeof body.notes === 'string' ? body.notes : '',
+      });
+      return reply.code(201).send({ style });
+    } catch (error) {
+      return reply.code(400).send({
+        error: { code: 'INVALID_INPUT', message: error instanceof Error ? error.message : String(error) },
+      });
+    }
+  });
+
+  app.delete('/v1/styles/:styleId', async (request, reply) => {
+    const { styleId } = request.params as { styleId: string };
+    if (!styleStore.delete(styleId)) {
+      return reply.code(404).send({ error: { code: 'NOT_FOUND', message: styleId } });
+    }
+    return { deleted: styleId, detached: true };
+  });
+
+  /** Lint the latest script against a profile without generating anything. */
+  app.get('/v1/projects/:id/style-lint', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    if (projectStore.get(id) === null) {
+      return reply.code(404).send({ error: { code: 'NOT_FOUND', message: id } });
+    }
+    return { lint: styleLintFor(id) };
+  });
+
+  // -------------------------------------------------------------- subtitle
+
+  app.post('/v1/projects/:id/subtitle', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    if (projectStore.get(id) === null) {
+      return reply.code(404).send({ error: { code: 'NOT_FOUND', message: id } });
+    }
+    const body = request.body as { scriptArtifactId?: unknown } | undefined;
+    // An explicit scriptArtifactId lets the user export an older version without
+    // re-saving it; anything else falls back to the newest script.
+    const explicitId = typeof body?.scriptArtifactId === 'string' ? body.scriptArtifactId : null;
+    const latest = artifactStore.latest(id, 'script');
+    if (explicitId === null && latest === null) {
+      return reply.code(409).send({ error: { code: 'NO_SCRIPT', message: 'generate or save a script first' } });
+    }
+    const source = explicitId === null ? latest : artifactStore.read(explicitId);
+    if (source === null || source.artifact.projectId !== id || source.artifact.kind !== 'script') {
+      return reply.code(400).send({ error: { code: 'INVALID_INPUT', message: 'unknown scriptArtifactId' } });
+    }
+    const cues = scriptToCues(source.content);
+    const srt = buildSrt(cues);
+    if (srt === '') {
+      return reply.code(422).send({ error: { code: 'EMPTY_SUBTITLE', message: 'script has no speakable text' } });
+    }
+    // Version allocation and the row insert must be atomic, otherwise two
+    // concurrent exports could pick the same version and overwrite each other.
+    const artifact = db.transaction(() => {
+      const version = artifactStore.nextVersion(id, 'subtitle', 'subtitle');
+      return artifactStore.save({
+        id: randomUUID(),
+        projectId: id,
+        runId: null,
+        kind: 'subtitle',
+        path: `subtitle/subtitle.v${version}.srt`,
+        content: srt,
+        mime: 'application/x-subrip',
+      });
+    })();
+    return reply.code(201).send({ artifact, cues: cues.length, sourceArtifactId: source.artifact.id });
+  });
+
+  // ---------------------------------------------------------------- review
+
+  app.post('/v1/projects/:id/review', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const project = projectStore.get(id);
+    if (project === null) {
+      return reply.code(404).send({ error: { code: 'NOT_FOUND', message: id } });
+    }
+    const metrics = metricsStore.list(id, 5);
+    if (metrics.length === 0) {
+      return reply.code(409).send({ error: { code: 'NO_METRICS', message: 'record at least one metrics sample first' } });
+    }
+    const latest = metrics[0];
+    if (latest === undefined) {
+      return reply.code(409).send({ error: { code: 'NO_METRICS', message: 'record at least one metrics sample first' } });
+    }
+    const previous = metrics[1];
+    const delta = (key: 'views' | 'likes' | 'comments'): string => {
+      if (previous === undefined || previous[key] === 0) return '无上期数据';
+      const change = Math.round(((latest[key] - previous[key]) / previous[key]) * 1000) / 10;
+      return `${change >= 0 ? '+' : ''}${change}%`;
+    };
+    const engagement =
+      latest.views === 0 ? 0 : Math.round(((latest.likes + latest.comments + latest.shares) / latest.views) * 10000) / 100;
+    const summaryArtifact = artifactStore.latest(id, 'publish-pack');
+    const context = [
+      `本期《${project.title}》，平台 ${project.platform}`,
+      `播放 ${latest.views}（环比 ${delta('views')}），点赞 ${latest.likes}（环比 ${delta('likes')}），评论 ${latest.comments}（环比 ${delta('comments')}）`,
+      `完播率 ${latest.retentionPercent}%，互动率 ${engagement}%，收益 ${latest.revenueCny} 元`,
+      latest.note === '' ? '' : `备注：${latest.note}`,
+      summaryArtifact === null ? '' : `发布包摘要：${summaryArtifact.content.slice(0, 800)}`,
+    ]
+      .filter((line) => line !== '')
+      .join('\n');
+
+    const runId = randomUUID();
+    const profile = options.modelGateway.listProfiles()[0];
+    const budget = settingsStore.getBudget();
+    runStore.createRun({
+      id: runId,
+      projectId: id,
+      parentRunId: null,
+      agentId: 'critic',
+      executionMode: 'local',
+      status: 'running',
+      modelProfileId: profile?.id ?? 'default',
+      budget: { maxTokens: 200_000, maxCostCny: budget.perProjectCostCny, usedTokens: 0, usedCostCny: 0 },
+      inputRef: null,
+      outputRef: null,
+      error: null,
+      startedAt: clock().toISOString(),
+      endedAt: null,
+      createdAt: clock().toISOString(),
+    });
+
+    let tokens = 0;
+    let cost = 0;
+    try {
+      const result = await generateArtifact(generateDeps, {
+        projectId: id,
+        kind: 'review-report',
+        context,
+        includeUpstream: true,
+        agentId: 'critic',
+        onUsage: (usage) => {
+          tokens += usage.inputTokens + usage.outputTokens;
+          if (profile !== undefined) {
+            cost +=
+              (usage.inputTokens / 1_000_000) * profile.priceInPerM +
+              (usage.outputTokens / 1_000_000) * profile.priceOutPerM;
+          }
+        },
+      });
+      runStore.patchRun(runId, { status: 'succeeded', endedAt: clock().toISOString(), outputRef: result.artifact.id });
+      try {
+        runStore.addBudgetUsage(runId, { tokens, costCny: Number(cost.toFixed(6)) });
+      } catch {
+        // Reporting only.
+      }
+      // Advance to the stage that owns the report in THIS project's pack. The
+      // novel pack calls it `revision`, the video pack `review`; a hardcoded key
+      // left novel projects pointing at a stage their pack does not have.
+      const reviewStages = scenarioStore.get(project.scenarioId)?.stages ?? [];
+      const reviewStage = reviewStages.find((stage) => (stage.produces as readonly string[]).includes('review-report'));
+      if (reviewStage === undefined) {
+        projectStore.advanceStageIfBehind(id, 'review', reviewStages.map((stage) => stage.key));
+      } else {
+        projectStore.advanceStageIfBehind(id, reviewStage.key, reviewStages.map((stage) => stage.key));
+      }
+      appendRunEvent(runId, 'run.finished', { status: 'succeeded', kind: 'review-report', tokens });
+      return reply.code(201).send({ ...result, runId });
+    } catch (error) {
+      const code =
+        error instanceof ModelOutputError ? 'MODEL_BAD_OUTPUT' : ((error as { code?: string }).code ?? 'MODEL_ERROR');
+      runStore.patchRun(runId, {
+        status: 'failed',
+        endedAt: clock().toISOString(),
+        error: { code, message: error instanceof Error ? error.message : String(error), retryable: false },
+      });
+      appendRunEvent(runId, 'error', { code });
+      return reply.code(502).send({
+        error: { code, message: error instanceof Error ? error.message : String(error) },
+      });
+    }
+  });
+
   // --------------------------------------------------------------- rewrite
 
   app.post('/v1/rewrite', async (request, reply) => {
@@ -1127,6 +2162,18 @@ ${body.text}`,
     const agentParsed = AgentIdSchema.safeParse(body?.agentId ?? 'scriptwriter');
     if (!agentParsed.success) {
       return reply.code(400).send({ error: { code: 'INVALID_INPUT', message: 'unknown agentId' } });
+    }
+    // The protocol enum lists every agent the product plans to ship; only the
+    // specs actually registered in this daemon can execute. Rejecting here means
+    // the caller gets a 400 instead of a run that fails at execution time.
+    if (!agents.some((agent) => agent.id === agentParsed.data)) {
+      return reply.code(400).send({
+        error: {
+          code: 'UNKNOWN_AGENT',
+          message: `agent ${agentParsed.data} is not registered on this daemon`,
+        },
+        available: agents.map((agent) => agent.id),
+      });
     }
     if (typeof body?.message !== 'string' || body.message.trim() === '') {
       return reply.code(400).send({ error: { code: 'INVALID_INPUT', message: 'message is required' } });
@@ -1455,27 +2502,50 @@ ${body.text}`,
     return reply.code(204).send();
   });
 
-  const runAutomation = async (
+  /**
+   * Automations that are mid-flight, keyed by id.
+   *
+   * The scheduler ticks every 30 seconds and the manual "run now" endpoint exists
+   * alongside it. Without this map, a tick that arrives while the previous
+   * generation is still streaming starts a second run for the same automation:
+   * two model calls, two artifacts, and two `automation_runs` rows where the user
+   * asked for one. The map also lets `close()` wait instead of dropping work.
+   */
+  const inFlight = new Map<string, Promise<{ status: 'succeeded' | 'failed'; artifactId?: string; error?: string }>>();
+
+  const runAutomation = (
     automationId: string,
   ): Promise<{ status: 'succeeded' | 'failed'; artifactId?: string; error?: string }> => {
-    const automation = automationStore.get(automationId);
-    if (automation === null) return { status: 'failed', error: 'NOT_FOUND' };
-    const run = automationStore.startRun(automationId);
-    try {
-      const result = await generateArtifact(generateDeps, {
-        projectId: automation.projectId,
-        kind: automation.kind,
-        context: automation.prompt,
-      });
-      automationStore.finishRun(run.id, { ok: true, artifactId: result.artifact.id });
-      automationStore.markRun(automationId);
-      return { status: 'succeeded', artifactId: result.artifact.id };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      automationStore.finishRun(run.id, { ok: false, error: message });
-      automationStore.markRun(automationId);
-      return { status: 'failed', error: message };
-    }
+    // Single flight per automation: a second caller joins the run already in
+    // progress rather than starting a competing one.
+    const existing = inFlight.get(automationId);
+    if (existing !== undefined) return existing;
+
+    const execution = (async (): Promise<{ status: 'succeeded' | 'failed'; artifactId?: string; error?: string }> => {
+      const automation = automationStore.get(automationId);
+      if (automation === null) return { status: 'failed', error: 'NOT_FOUND' };
+      const run = automationStore.startRun(automationId);
+      try {
+        const result = await generateArtifact(generateDeps, {
+          projectId: automation.projectId,
+          kind: automation.kind,
+          context: automation.prompt,
+        });
+        automationStore.finishRun(run.id, { ok: true, artifactId: result.artifact.id });
+        automationStore.markRun(automationId);
+        return { status: 'succeeded', artifactId: result.artifact.id };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        automationStore.finishRun(run.id, { ok: false, error: message });
+        automationStore.markRun(automationId);
+        return { status: 'failed', error: message };
+      } finally {
+        inFlight.delete(automationId);
+      }
+    })();
+
+    inFlight.set(automationId, execution);
+    return execution;
   };
 
   app.post('/v1/automations/:id/run', async (request, reply) => {
@@ -1502,19 +2572,26 @@ ${body.text}`,
     if (projectStore.get(id) === null) {
       return reply.code(404).send({ error: { code: 'NOT_FOUND', message: id } });
     }
-    const body = request.body as Record<string, unknown> | undefined;
-    const numeric = (key: string): number => (typeof body?.[key] === 'number' ? (body[key] as number) : 0);
-    if (typeof body?.views !== 'number' || typeof body.likes !== 'number' || typeof body.comments !== 'number') {
-      return reply.code(400).send({ error: { code: 'INVALID_INPUT', message: 'views, likes and comments are required' } });
+    // Validated against the shared contract rather than read field by field.
+    // The previous hand-rolled reader treated an unknown key such as
+    // `completionRate` as "not provided" and answered 201, so a client could
+    // record a metric missing the value it thought it sent. Strict parsing turns
+    // that into a 400 that names the offending key.
+    const parsed = ProjectMetricsInputSchema.strict().safeParse(request.body);
+    if (!parsed.success) {
+      const issue = parsed.error.issues[0];
+      const where = issue !== undefined && issue.path.length > 0 ? `${issue.path.join('.')}: ` : '';
+      const detail = issue === undefined ? 'invalid metrics payload' : issue.message;
+      return reply.code(400).send({ error: { code: 'INVALID_INPUT', message: `${where}${detail}` } });
     }
     const metrics = metricsStore.record(id, {
-      views: numeric('views'),
-      likes: numeric('likes'),
-      comments: numeric('comments'),
-      shares: numeric('shares'),
-      retentionPercent: numeric('retentionPercent'),
-      revenueCny: numeric('revenueCny'),
-      note: typeof body.note === 'string' ? body.note.slice(0, 300) : '',
+      views: parsed.data.views,
+      likes: parsed.data.likes,
+      comments: parsed.data.comments,
+      shares: parsed.data.shares ?? 0,
+      retentionPercent: parsed.data.retentionPercent ?? 0,
+      revenueCny: parsed.data.revenueCny ?? 0,
+      note: parsed.data.note ?? '',
     });
     return reply.code(201).send({ metrics });
   });
@@ -1643,6 +2720,15 @@ ${body.text}`,
     db,
     async close(): Promise<void> {
       if (timer !== null) clearInterval(timer);
+      // Let in-flight generations finish before the database closes. Closing
+      // underneath a running write is how a run row ends up half-written; the
+      // bounded wait keeps a stuck model call from blocking shutdown forever.
+      if (inFlight.size > 0) {
+        await Promise.race([
+          Promise.allSettled([...inFlight.values()]),
+          new Promise((resolve) => setTimeout(resolve, 10_000)),
+        ]);
+      }
       await app.close();
       db.close();
     },
@@ -1652,7 +2738,7 @@ ${body.text}`,
 
 function buildPublishSummary(artifacts: Array<{ kind: string; path: string }>): string | null {
   const lines: string[] = ['# 发布包', '', '本发布包由稿台 Creator Studio 生成。', ''];
-  const order = ['topic-card', 'research-notes', 'script', 'shot-list', 'publish-pack'];
+  const order = ['topic-card', 'research-notes', 'script', 'shot-list', 'subtitle', 'publish-pack'];
   for (const kind of order) {
     const found = artifacts.find((artifact) => artifact.kind === kind);
     if (found === undefined) continue;
@@ -1672,6 +2758,8 @@ function labelOf(kind: string): string {
       return '脚本';
     case 'shot-list':
       return '分镜';
+    case 'subtitle':
+      return '字幕';
     case 'publish-pack':
       return '包装';
     default:

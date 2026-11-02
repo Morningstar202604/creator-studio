@@ -5,7 +5,10 @@ export type Project = {
   ownerId: string;
   title: string;
   platform: Platform;
-  stage: 'topic' | 'research' | 'script' | 'shotlist' | 'package' | 'published' | 'review';
+  /** Scenario-defined stage key; the pack decides the order and labels. */
+  stage: string;
+  /** Which scenario pack this project follows. */
+  scenarioId: string;
   workspacePath: string | null;
   styleProfileId: string | null;
   description?: string;
@@ -83,6 +86,170 @@ export type ModelInfo = {
   keyConfigured?: boolean;
 };
 
+export type EntityField = {
+  key: string;
+  label: string;
+  type: 'text' | 'longtext' | 'number' | 'select' | 'tags' | 'date' | 'url';
+  required: boolean;
+  options: string[];
+  placeholder: string;
+  wide: boolean;
+};
+
+export type EntityType = {
+  key: string;
+  label: string;
+  labelPlural: string;
+  hint: string;
+  icon: string;
+  titleField: string;
+  fields: EntityField[];
+  summaryFields: string[];
+};
+
+/** Artifact kinds the model can be asked to produce. */
+export type GenerateKind =
+  | 'topic-card'
+  | 'research-notes'
+  | 'script'
+  | 'shot-list'
+  | 'publish-pack'
+  | 'review-report'
+  | 'outline'
+  | 'chapter';
+
+export const GENERATE_KINDS: GenerateKind[] = [
+  'topic-card',
+  'research-notes',
+  'script',
+  'shot-list',
+  'publish-pack',
+  'review-report',
+  'outline',
+  'chapter',
+];
+
+export function isGenerateKind(value: string | undefined): value is GenerateKind {
+  return value !== undefined && (GENERATE_KINDS as string[]).includes(value);
+}
+
+export type StageView = 'generate' | 'entities' | 'publish' | 'review' | 'board' | 'document';
+
+export type BoardConfig = { groupBy: string; order: string[] };
+
+/** Where a writing stage keeps its prose. Absent fields mean body / title / order. */
+export type DocumentConfig = {
+  bodyField?: string;
+  titleField?: string;
+  orderField?: string;
+  fileStem?: string;
+};
+
+export type RelationType = {
+  key: string;
+  label: string;
+  inverse: string;
+  fromTypes: string[];
+  toTypes: string[];
+};
+
+export type ScenarioStage = {
+  key: string;
+  label: string;
+  /** Absent means `generate`; see stageView() on the daemon side. */
+  view?: StageView;
+  entityType?: string;
+  /** Present when view is `board`: which select field supplies the columns. */
+  board?: BoardConfig;
+  /** Present when view is `document`: where the prose lives. */
+  document?: DocumentConfig;
+  hint: string;
+  produces: string[];
+  promptHint: string;
+  required: boolean;
+};
+
+export type ScenarioPack = {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+  builtin: boolean;
+  stages: ScenarioStage[];
+  entityTypes: EntityType[];
+  relationTypes: RelationType[];
+  /** Pack shape version; see PACK_FORMAT_VERSION on the daemon side. */
+  formatVersion: number;
+  /** Views this pack uses; negotiated against the engine at import time. */
+  requiresViews: StageView[];
+  inherits?: string;
+  defaultPlatform: Platform;
+};
+
+export type EntityCard = {
+  id: string;
+  projectId: string;
+  type: string;
+  title: string;
+  fields: Record<string, string>;
+  body: string;
+  tags: string[];
+  order: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type EntityRelation = {
+  id: string;
+  projectId: string;
+  fromCardId: string;
+  toCardId: string;
+  label: string;
+  createdAt: string;
+};
+
+export type CardLink = {
+  relation: EntityRelation;
+  card: EntityCard;
+  direction: 'out' | 'in';
+};
+
+export type EntityCardWithLinks = EntityCard & { links: CardLink[] };
+
+export type GraphEdge = {
+  id: string;
+  from: string;
+  to: string;
+  label: string;
+  relationType: string | null;
+};
+
+export type ForeshadowHealthItem = {
+  cardId: string;
+  title: string;
+  status: string;
+  plantedAt: string;
+  plantedChapter: number | null;
+  lastChapter: number | null;
+  gapChapters: number | null;
+  note: string;
+};
+
+export type ForeshadowHealth = {
+  total: number;
+  open: number;
+  paidOff: number;
+  items: ForeshadowHealthItem[];
+  relationTypes: RelationType[];
+};
+
+export type ProjectGraph = {
+  nodes: EntityCard[];
+  edges: GraphEdge[];
+  entityTypes: EntityType[];
+  relationTypes: RelationType[];
+};
+
 export type GrantInfo = { id: string; deviceId: string; tool: string; scope: string; mode: string };
 
 export type GrantTool = { name: string; risk: string; approvalKind: string | null; mode: string };
@@ -141,6 +308,10 @@ export class ApiError extends Error {
   }
 }
 
+function isAbortError(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'name' in error && error.name === 'AbortError';
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   const hasBody = init?.body !== undefined;
@@ -153,6 +324,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       },
     });
   } catch (error) {
+    if (init?.signal?.aborted || isAbortError(error)) throw error;
     throw new ApiError(
       'DAEMON_UNREACHABLE',
       `无法连接本地 daemon（${BASE}）：${error instanceof Error ? error.message : '网络错误'}`,
@@ -179,12 +351,108 @@ export const api = {
 
   tools: (): Promise<{ tools: ToolInfo[] }> => request('/v1/tools'),
 
-  listProjects: (): Promise<{ projects: Project[] }> => request('/v1/projects'),
+  listProjects: (
+    params: { q?: string; includeDeleted?: boolean } = {},
+  ): Promise<{ projects: Project[]; counts?: { total: number; active: number; deleted: number } }> => {
+    const search = new URLSearchParams();
+    if (params.q !== undefined && params.q !== '') search.set('q', params.q);
+    if (params.includeDeleted === true) search.set('includeDeleted', '1');
+    const suffix = search.toString() === '' ? '' : `?${search.toString()}`;
+    return request(`/v1/projects${suffix}`);
+  },
 
   getProject: (id: string): Promise<{ project: Project }> => request(`/v1/projects/${id}`),
 
-  createProject: (title: string, platform: Platform): Promise<{ project: Project }> =>
-    request('/v1/projects', { method: 'POST', body: JSON.stringify({ title, platform }) }),
+  createProject: (
+    title: string,
+    platform: Platform,
+    scenarioId?: string,
+  ): Promise<{ project: Project; scenario?: ScenarioPack }> =>
+    request('/v1/projects', {
+      method: 'POST',
+      body: JSON.stringify(scenarioId === undefined ? { title, platform } : { title, platform, scenarioId }),
+    }),
+
+  scenarios: (): Promise<{ scenarios: ScenarioPack[]; defaultId: string }> => request('/v1/scenarios'),
+
+  saveScenario: (pack: unknown): Promise<{ scenario: ScenarioPack }> =>
+    request('/v1/scenarios', { method: 'POST', body: JSON.stringify(pack) }),
+
+  deleteScenario: (id: string): Promise<{ deleted: string }> =>
+    request(`/v1/scenarios/${id}`, { method: 'DELETE' }),
+
+  entities: (
+    projectId: string,
+    type?: string,
+  ): Promise<{
+    cards: EntityCard[];
+    counts: Record<string, number>;
+    entityType?: EntityType;
+    board?: BoardConfig;
+    document?: DocumentConfig & { stage: string; label: string };
+  }> =>
+    request(
+      `/v1/projects/${projectId}/entities${type === undefined ? '' : `?type=${encodeURIComponent(type)}`}`,
+    ),
+
+  createEntity: (
+    projectId: string,
+    input: { type: string; title: string; fields: Record<string, string>; body?: string; tags?: string[] },
+  ): Promise<{ card: EntityCard }> =>
+    request(`/v1/projects/${projectId}/entities`, { method: 'POST', body: JSON.stringify(input) }),
+
+  updateEntity: (
+    projectId: string,
+    cardId: string,
+    input: { title?: string; fields?: Record<string, string>; body?: string; tags?: string[]; order?: number },
+  ): Promise<{ card: EntityCard }> =>
+    request(`/v1/projects/${projectId}/entities/${cardId}`, { method: 'PATCH', body: JSON.stringify(input) }),
+
+  deleteEntity: (projectId: string, cardId: string): Promise<{ deleted: string }> =>
+    request(`/v1/projects/${projectId}/entities/${cardId}`, { method: 'DELETE' }),
+
+  manuscript: (
+    projectId: string,
+  ): Promise<{
+    stage: string;
+    entityType: string;
+    config: DocumentConfig;
+    title: string;
+    totalChars: number;
+    chapters: Array<{ id: string; title: string; order: number; chars: number }>;
+  }> => request(`/v1/projects/${projectId}/manuscript`),
+
+  exportManuscript: (
+    projectId: string,
+  ): Promise<{
+    file: string;
+    markdownFile: string;
+    bytes: number;
+    chapters: number;
+    chars: number;
+    downloadUrl: string;
+  }> => request(`/v1/projects/${projectId}/manuscript/export`, { method: 'POST' }),
+
+  /** Absolute URL for the download anchor; a relative path would resolve to the app shell. */
+  manuscriptDownloadUrl: (projectId: string, name: string): string =>
+    `${BASE}/v1/projects/${projectId}/manuscript/download/${encodeURIComponent(name)}`,
+
+  projectGraph: (projectId: string): Promise<ProjectGraph> => request(`/v1/projects/${projectId}/graph`),
+
+  foreshadowHealth: (projectId: string): Promise<ForeshadowHealth> =>
+    request(`/v1/projects/${projectId}/foreshadow-health`),
+
+  cardLinks: (projectId: string, cardId: string): Promise<{ card: EntityCardWithLinks }> =>
+    request(`/v1/projects/${projectId}/entities/${cardId}/links`),
+
+  linkCards: (projectId: string, cardId: string, input: { toCardId: string; label?: string }): Promise<{ relation: EntityRelation }> =>
+    request(`/v1/projects/${projectId}/entities/${cardId}/links`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+
+  unlinkCards: (projectId: string, relationId: string): Promise<{ deleted: string }> =>
+    request(`/v1/projects/${projectId}/links/${relationId}`, { method: 'DELETE' }),
 
   advanceStage: (id: string, stage: Project['stage']): Promise<{ project: Project }> =>
     request(`/v1/projects/${id}/stage`, { method: 'POST', body: JSON.stringify({ stage }) }),
@@ -298,12 +566,13 @@ export const api = {
 
   generate: (
     projectId: string,
-    kind: 'topic-card' | 'research-notes' | 'script' | 'shot-list' | 'publish-pack' | 'review-report',
+    kind: GenerateKind,
     context: string,
-  ): Promise<{ artifact: Artifact; payload: unknown }> =>
+    sources?: string[],
+  ): Promise<{ artifact: Artifact; payload: unknown; meta?: unknown }> =>
     request(`/v1/projects/${projectId}/generate`, {
       method: 'POST',
-      body: JSON.stringify({ kind, context }),
+      body: JSON.stringify(sources === undefined ? { kind, context } : { kind, context, sources }),
     }),
 };
 
@@ -324,7 +593,8 @@ export type Automation = {
 export type AutomationRun = {
   id: string;
   automationId: string;
-  status: 'running' | 'succeeded' | 'failed';
+  /** `interrupted` means the daemon stopped mid-run; nothing is still executing. */
+  status: 'running' | 'succeeded' | 'failed' | 'interrupted';
   artifactId: string | null;
   error: string | null;
   startedAt: string;
@@ -393,16 +663,19 @@ export const apiExtra = {
 
   updateProject: (
     id: string,
-    input: { title?: string; platform?: Platform; description?: string; tags?: string[] },
+    input: { title?: string; platform?: Platform; description?: string; tags?: string[]; styleProfileId?: string | null },
   ): Promise<{ project: Project }> =>
     request(`/v1/projects/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
 
   deleteProject: (id: string): Promise<{ deleted: string; recoverable: boolean }> =>
     request(`/v1/projects/${id}`, { method: 'DELETE' }),
 
+  restoreProject: (id: string): Promise<{ project: Project }> =>
+    request(`/v1/projects/${id}/restore`, { method: 'POST' }),
+
   projectDetail: (id: string): Promise<{
     project: Project;
-    stats: { artifacts: number; runs: number; tokens: number; costCny: number };
+    stats: { artifacts: number; cards?: number; runs: number; tokens: number; costCny: number };
     checklist: ChecklistItem[];
   }> => request(`/v1/projects/${id}`),
 
@@ -542,6 +815,56 @@ export const apiExtra = {
     activeModelId: string | null;
     source: string;
   }> => request('/v1/settings/models'),
+
+  styles: (signal?: AbortSignal): Promise<{ styles: StyleProfile[] }> =>
+    request('/v1/styles', signal === undefined ? undefined : { signal }),
+
+  saveStyle: (input: {
+    id?: string;
+    name: string;
+    tone?: string;
+    audience?: string;
+    bannedWords?: string[];
+    notes?: string;
+  }): Promise<{ style: StyleProfile }> =>
+    request('/v1/styles', { method: 'POST', body: JSON.stringify(input) }),
+
+  deleteStyle: (id: string): Promise<{ deleted: string; detached: boolean }> =>
+    request(`/v1/styles/${id}`, { method: 'DELETE' }),
+
+  styleLint: (projectId: string): Promise<{ lint: StyleLint | null }> =>
+    request(`/v1/projects/${projectId}/style-lint`),
+
+  exportSubtitle: (
+    projectId: string,
+    scriptArtifactId?: string,
+  ): Promise<{ artifact: Artifact; cues: number; sourceArtifactId: string }> =>
+    request(`/v1/projects/${projectId}/subtitle`, {
+      method: 'POST',
+      body: JSON.stringify(scriptArtifactId === undefined ? {} : { scriptArtifactId }),
+    }),
+
+  generateReview: (
+    projectId: string,
+  ): Promise<{ artifact: Artifact; payload: unknown; runId: string }> =>
+    request(`/v1/projects/${projectId}/review`, { method: 'POST' }),
+};
+
+export type StyleProfile = {
+  id: string;
+  userId: string;
+  name: string;
+  tone: string;
+  audience: string;
+  bannedWords: string[];
+  notes: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type StyleLint = {
+  bannedWords: string[];
+  hits: Array<{ word: string; count: number }>;
 };
 
 export type Usage = {

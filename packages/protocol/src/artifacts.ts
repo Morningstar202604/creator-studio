@@ -58,6 +58,8 @@ export function parseByKind(kind: GenerateKind, value: unknown): unknown {
   if (kind === 'topic-card') return TopicCardsSchema.parse(coerced);
   if (kind === 'research-notes') return ResearchNotesSchema.parse(coerced);
   if (kind === 'script') return ScriptDraftSchema.parse(coerced);
+  if (kind === 'outline') return OutlineDraftSchema.parse(coerced);
+  if (kind === 'chapter') return ChapterDraftSchema.parse(coerced);
   if (kind === 'shot-list') return ShotListSchema.parse(coerced);
   if (kind === 'review-report') return ReviewReportSchema.parse(coerced);
   return PublishPackSchema.parse(coerced);
@@ -132,13 +134,51 @@ export const ReviewReportSchema = z.object({
 });
 export type ReviewReport = z.infer<typeof ReviewReportSchema>;
 
+/** Story outline: acts, beats and the turn each beat must deliver. */
+export const OutlineDraftSchema = z.object({
+  logline: z.string().min(1).max(300),
+  acts: z
+    .array(
+      z.object({
+        title: z.string().min(1).max(60),
+        purpose: z.string().min(1).max(200),
+        beats: z
+          .array(
+            z.object({
+              summary: z.string().min(1).max(300),
+              turn: z.string().max(200),
+              foreshadow: z.string().max(200),
+            }),
+          )
+          .min(1)
+          .max(20),
+      }),
+    )
+    .min(2)
+    .max(8),
+  estimatedChapters: z.number().int().min(1).max(500),
+});
+export type OutlineDraft = z.infer<typeof OutlineDraftSchema>;
+
+/** One chapter of prose plus the metadata a revision pass needs. */
+export const ChapterDraftSchema = z.object({
+  title: z.string().min(1).max(80),
+  pov: z.string().max(40),
+  summary: z.string().min(1).max(300),
+  content: z.string().min(1).max(20000),
+  endsWithHook: z.boolean(),
+});
+export type ChapterDraft = z.infer<typeof ChapterDraftSchema>;
+
 export type GenerateKind =
   | 'topic-card'
   | 'research-notes'
   | 'script'
   | 'shot-list'
   | 'publish-pack'
-  | 'review-report';
+  | 'review-report'
+  | 'outline'
+  | 'chapter';
 
 export const GENERATE_KINDS: GenerateKind[] = [
   'topic-card',
@@ -147,6 +187,8 @@ export const GENERATE_KINDS: GenerateKind[] = [
   'shot-list',
   'publish-pack',
   'review-report',
+  'outline',
+  'chapter',
 ];
 
 /**
@@ -223,6 +265,36 @@ export function coerceByKind(kind: GenerateKind, value: unknown): unknown {
           durationSec: Math.max(1, Math.round(number(entry['durationSec'], 6))),
         };
       }),
+    };
+  }
+
+  if (kind === 'outline') {
+    const record = asRecord(root);
+    return {
+      logline: text(record['logline']),
+      acts: arrayOf(root, 'acts').map((act) => {
+        const entry = asRecord(act);
+        return {
+          title: text(entry['title']),
+          purpose: text(entry['purpose']),
+          beats: arrayOf(entry, 'beats').map((beat) => {
+            const b = asRecord(beat);
+            return { summary: text(b['summary']), turn: text(b['turn']), foreshadow: text(b['foreshadow']) };
+          }),
+        };
+      }),
+      estimatedChapters: Math.max(1, Math.trunc(number(record['estimatedChapters'], 20))),
+    };
+  }
+
+  if (kind === 'chapter') {
+    const record = asRecord(root);
+    return {
+      title: text(record['title']),
+      pov: text(record['pov']),
+      summary: text(record['summary']),
+      content: text(record['content']),
+      endsWithHook: record['endsWithHook'] === true || record['endsWithHook'] === 'true',
     };
   }
 

@@ -26,15 +26,18 @@ export const AgentIdSchema = z.enum([
 ]);
 export type AgentId = z.infer<typeof AgentIdSchema>;
 
-export const ProjectStageSchema = z.enum([
-  'topic',
-  'research',
-  'script',
-  'shotlist',
-  'package',
-  'published',
-  'review',
-]);
+/**
+ * Stages are scenario-defined strings, not a fixed enum: the video pipeline used to
+ * be the only shape, and a novel or a course needs different columns. The legacy
+ * list is kept so migrations and older callers still have a reference point.
+ */
+export const LEGACY_VIDEO_STAGES = ['topic', 'research', 'script', 'shotlist', 'package', 'published', 'review'] as const;
+
+export const ProjectStageSchema = z
+  .string()
+  .min(1)
+  .max(32)
+  .regex(/^[a-z][a-z0-9-]*$/, 'stage keys are lowercase letters, digits and dashes');
 export type ProjectStage = z.infer<typeof ProjectStageSchema>;
 
 export const PlatformSchema = z.enum(['bilibili', 'youtube', 'xiaohongshu', 'generic']);
@@ -46,6 +49,8 @@ export const ProjectSchema = z.object({
   title: z.string().min(1).max(200),
   platform: PlatformSchema,
   stage: ProjectStageSchema,
+  /** Which scenario pack defines this project's stages and cards. */
+  scenarioId: z.string().min(1).max(48).default('video'),
   workspacePath: z.string().min(1).nullable(),
   styleProfileId: z.string().min(1).nullable(),
   description: z.string().max(500).default(''),
@@ -140,6 +145,8 @@ export const ArtifactKindSchema = z.enum([
   'subtitle',
   'publish-pack',
   'review-report',
+  'outline',
+  'chapter',
   'image',
   'audio',
   'other',

@@ -20,6 +20,29 @@ vi.mock('../src/api', async () => {
       })),
       tools: vi.fn(async () => ({ tools: [] })),
       listProjects: vi.fn(async () => ({ projects: [] })),
+      scenarios: vi.fn(async () => ({
+        scenarios: [
+          {
+            id: 'video',
+            name: '中长视频',
+            description: '',
+            icon: '',
+            builtin: true,
+            defaultPlatform: 'bilibili',
+            stages: [
+              { key: 'topic', label: '选题', hint: '', produces: ['topic-card'], promptHint: '', required: true },
+              { key: 'research', label: '资料', hint: '', produces: ['research-notes'], promptHint: '', required: true },
+              { key: 'script', label: '脚本', hint: '', produces: ['script'], promptHint: '', required: true },
+              { key: 'shotlist', label: '分镜', hint: '', produces: ['shot-list'], promptHint: '', required: false },
+              { key: 'package', label: '包装', hint: '', produces: ['publish-pack'], promptHint: '', required: true },
+              { key: 'published', label: '发布', hint: '', produces: [], promptHint: '', required: false },
+              { key: 'review', label: '复盘', hint: '', produces: ['review-report'], promptHint: '', required: false },
+            ],
+            entityTypes: [],
+          },
+        ],
+        defaultId: 'video',
+      })),
       getProject: vi.fn(async () => ({
         project: {
           id: 'p1',
@@ -27,6 +50,7 @@ vi.mock('../src/api', async () => {
           title: '发布项目',
           platform: 'bilibili',
           stage: 'published',
+          scenarioId: 'video',
           workspacePath: null,
           styleProfileId: null,
           createdAt: '2026-10-21T10:00:00.000Z',

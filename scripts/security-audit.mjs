@@ -7,7 +7,9 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
 const root = process.cwd();
-const SKIP = new Set(['node_modules', 'dist', 'target', '.git', 'out', 'daemon-runtime', 'prototype']);
+// `.tmp` holds throwaway scaffolding (and sometimes a downloaded Postgres); it is
+// never shipped, so scanning it only inflates the count and slows the gate.
+const SKIP = new Set(['node_modules', 'dist', 'target', '.git', 'out', 'daemon-runtime', 'prototype', '.tmp']);
 const EXT = /\.(ts|tsx|mjs|js|rs|sql)$/;
 
 function walk(dir, files = []) {

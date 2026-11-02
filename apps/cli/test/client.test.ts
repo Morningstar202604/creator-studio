@@ -82,6 +82,47 @@ describe('CLI client contract', () => {
     });
   });
 
+  it('posts an empty body when no script version is pinned for subtitle export', async () => {
+    handler = () => ({ status: 201, body: { artifact: { id: 's1', path: 'subtitle/subtitle.v1.srt' }, cues: 12 } });
+    const result = await client().subtitle('p1');
+    expect(result.cues).toBe(12);
+    const call = calls.at(-1);
+    expect(call?.method).toBe('POST');
+    expect(call?.url).toBe('/v1/projects/p1/subtitle');
+    expect(JSON.parse(call?.body ?? '{}')).toEqual({});
+  });
+
+  it('pins a specific script version for subtitle export', async () => {
+    handler = () => ({ status: 201, body: { artifact: { id: 's2', path: 'subtitle/subtitle.v2.srt' }, cues: 9 } });
+    await client().subtitle('p1', 'a1');
+    expect(JSON.parse(calls.at(-1)?.body ?? '{}')).toEqual({ scriptArtifactId: 'a1' });
+  });
+
+  it('posts to the review endpoint and returns the report artifact', async () => {
+    handler = () => ({
+      status: 201,
+      body: { artifact: { id: 'r1', path: 'review/review-report.v1.md' }, runId: 'run-1' },
+    });
+    const result = await client().review('p1');
+    expect(result.artifact.path).toBe('review/review-report.v1.md');
+    expect(calls.at(-1)?.url).toBe('/v1/projects/p1/review');
+  });
+
+  it('asks for history only when the flag is set', async () => {
+    handler = () => ({ status: 201, body: { file: 'x.zip', absolutePath: 'x.zip', bytes: 1, entries: [], stage: 'published' } });
+    await client().publish('p1');
+    expect(JSON.parse(calls.at(-1)?.body ?? '{}')).toEqual({});
+    await client().publish('p1', { includeHistory: true });
+    expect(JSON.parse(calls.at(-1)?.body ?? '{}')).toEqual({ includeHistory: true });
+  });
+
+  it('creates a style profile with only the fields that were supplied', async () => {
+    handler = () => ({ status: 201, body: { style: { id: 'st1', name: '理性分析' } } });
+    const result = await client().saveStyle({ name: '理性分析', bannedWords: ['赋能'] });
+    expect(result.style.id).toBe('st1');
+    expect(JSON.parse(calls.at(-1)?.body ?? '{}')).toEqual({ name: '理性分析', bannedWords: ['赋能'] });
+  });
+
   it('reports DAEMON_UNREACHABLE when the socket is closed', async () => {
     const dead = new DaemonClient({ baseUrl: 'http://127.0.0.1:1' });
     const error = await dead.health().catch((cause: unknown) => cause);

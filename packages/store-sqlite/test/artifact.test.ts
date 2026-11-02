@@ -74,6 +74,22 @@ describe('R1 versions are append-only', () => {
     expect(store.nextVersion(projectId, 'script', 'script')).toBe(3);
   });
 
+  it('counts versions for non-markdown extensions such as SRT', () => {
+    const projectId = `project-${sequence}`;
+    const runId = `run-${sequence}`;
+    expect(store.nextVersion(projectId, 'subtitle', 'subtitle')).toBe(1);
+    store.save({
+      id: 'sub1',
+      projectId,
+      runId,
+      kind: 'subtitle',
+      path: 'subtitle/subtitle.v1.srt',
+      content: '1\n00:00:00,000 --> 00:00:01,000\n第一句',
+      mime: 'application/x-subrip',
+    });
+    expect(store.nextVersion(projectId, 'subtitle', 'subtitle')).toBe(2);
+  });
+
   it('returns the latest version of a kind', () => {
     const projectId = `project-${sequence}`;
     const runId = `run-${sequence}`;

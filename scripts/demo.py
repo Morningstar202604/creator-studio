@@ -10,7 +10,7 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
-SHOTS = ROOT / "docs" / "screenshots"
+SHOTS = ROOT / "docs" / "screenshots-demo"
 VIDEO = ROOT / "docs" / "media"
 
 
@@ -65,11 +65,11 @@ def main() -> int:
         page.goto(f"{args.base}/#/p/{pid}/topic", wait_until="networkidle")
         shot("23-topic-showcase", 800)
 
-        page.goto(f"{args.base}/#/p/{pid}/script", wait_until="networkidle")
-        shot("24-script-showcase", 800)
-
         page.goto(f"{args.base}/#/p/{pid}/publish", wait_until="networkidle")
         shot("25-publish-showcase", 900)
+
+        page.goto(f"{args.base}/#/p/{pid}/script", wait_until="networkidle")
+        shot("24-script-showcase", 800)
 
         page.goto(f"{args.base}/#/p/{pid}/review", wait_until="networkidle")
         shot("26-review-showcase", 1600)
@@ -81,9 +81,6 @@ def main() -> int:
 
         page.goto(f"{args.base}/#/settings", wait_until="networkidle")
         shot("28-settings-showcase", 700)
-
-        page.goto(f"{args.base}/#/automations", wait_until="networkidle")
-        shot("29-automations-showcase", 600)
 
         if args.video:
             page.goto(f"{args.base}/#/", wait_until="networkidle")

@@ -1,7 +1,7 @@
 {
   "name": "creator-studio",
   "private": true,
-  "version": "0.3.1",
+  "version": "0.17.1",
   "packageManager": "pnpm@12.11.2",
   "engines": {
     "node": ">=22"
@@ -10,34 +10,41 @@
     "build": "pnpm -r build",
     "typecheck": "pnpm -r build && pnpm -r typecheck",
     "test": "pnpm -r build && pnpm -r test",
-    "verify": "pnpm -r build && pnpm -r typecheck && pnpm -r test && node scripts/security-audit.mjs && python scripts/check-contrast.py",
-    "e2e": "node scripts/smoke-e2e.mjs"
+    "lint": "eslint \"apps/**/*.{ts,tsx}\" \"packages/**/*.{ts,tsx}\" \"scripts/**/*.{mjs,ts}\" --max-warnings=0",
+    "smoke:model": "pnpm -r build && node scripts/smoke-model.mjs --mode offline",
+    "smoke:model:real": "pnpm -r build && node scripts/smoke-model.mjs --mode real",
+    "test:postgres": "node scripts/postgres-test.mjs",
+    "verify": "pnpm lint && pnpm -r build && pnpm -r typecheck && pnpm -r test && node scripts/smoke-model.mjs --mode offline && node scripts/security-audit.mjs && python scripts/check-contrast.py && node scripts/verify-versions.mjs && pnpm test:postgres",
+    "e2e": "node scripts/smoke-e2e.mjs",
+    "verify:versions": "node scripts/verify-versions.mjs"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
-  },
-  "description": "本地优先的创作者 AI 制片台：选题、资料、脚本、分镜、包装、发布包、复盘一条流水线",
+  "description": "Local-first AI production desk for solo creators: video, novels, podcasts, courses, with scenario packs, approval-gated tools and contract-checked artifacts",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Morningstar202604/creator-studio.git"
+    "url": "https://gitcode.com/badhope/creator-studio.git"
   },
-  "homepage": "https://github.com/Morningstar202604/creator-studio#readme",
+  "homepage": "https://gitcode.com/badhope/creator-studio#readme",
   "bugs": {
-    "url": "https://github.com/Morningstar202604/creator-studio/issues"
+    "url": "https://gitcode.com/badhope/creator-studio/issues"
   },
   "keywords": [
     "ai",
     "agent",
     "creator",
     "video",
+    "novel",
+    "podcast",
     "local-first",
     "tauri",
-    "electron-alternative",
-    "content-creation",
     "workflow",
-    "llm"
-  ]
+    "llm",
+    "scenario-packs"
+  ],
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "eslint": "10.14.0",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "typescript-eslint": "8.72.1"
+  }
 }

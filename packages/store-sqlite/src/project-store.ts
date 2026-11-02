@@ -1,5 +1,5 @@
 import type { Database } from 'better-sqlite3';
-import { ProjectSchema, type Project, type Platform, type ProjectStage } from '@creator-studio/protocol';
+import { LEGACY_VIDEO_STAGES, ProjectSchema, type Project, type Platform, type ProjectStage } from '@creator-studio/protocol';
 
 type ProjectRow = {
   id: string;
@@ -7,6 +7,7 @@ type ProjectRow = {
   title: string;
   platform: string;
   stage: string;
+  scenario_id: string | null;
   workspace_path: string | null;
   style_profile_id: string | null;
   description: string | null;
@@ -24,6 +25,10 @@ export type CreateProjectInput = {
   workspacePath: string | null;
   description?: string;
   tags?: string[];
+  /** Scenario pack id; defaults to the video pipeline. */
+  scenarioId?: string;
+  /** First stage of that pack; defaults to `topic` for the video pack. */
+  stage?: string;
   now?: string;
 };
 
@@ -32,6 +37,11 @@ export type UpdateProjectInput = {
   platform?: Platform;
   description?: string;
   tags?: string[];
+  /** Null detaches the current style profile. */
+  styleProfileId?: string | null;
+  /** Switching scenario also resets the stage to that pack's first stage. */
+  scenarioId?: string;
+  stage?: string;
 };
 
 function toProject(row: ProjectRow): Project {
@@ -50,6 +60,7 @@ function toProject(row: ProjectRow): Project {
     title: row.title,
     platform: row.platform,
     stage: row.stage,
+    scenarioId: row.scenario_id ?? 'video',
     workspacePath: row.workspace_path,
     styleProfileId: row.style_profile_id,
     description: row.description ?? '',
@@ -70,7 +81,8 @@ export class SqliteProjectStore {
       ownerId: input.ownerId,
       title: input.title,
       platform: input.platform,
-      stage: 'topic',
+      stage: input.stage ?? 'topic',
+      scenarioId: input.scenarioId ?? 'video',
       workspacePath: input.workspacePath,
       styleProfileId: null,
       description: input.description ?? '',
@@ -82,9 +94,9 @@ export class SqliteProjectStore {
     const parsed = ProjectSchema.parse(project);
     this.db
       .prepare(
-        `INSERT INTO projects (id, owner_id, title, platform, stage, workspace_path,
+        `INSERT INTO projects (id, owner_id, title, platform, stage, scenario_id, workspace_path,
            style_profile_id, description, tags, created_at, updated_at, deleted_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         parsed.id,
@@ -92,6 +104,7 @@ export class SqliteProjectStore {
         parsed.title,
         parsed.platform,
         parsed.stage,
+        parsed.scenarioId,
         parsed.workspacePath,
         parsed.styleProfileId,
         parsed.description,
@@ -117,18 +130,32 @@ export class SqliteProjectStore {
     return rows.map(toProject);
   }
 
+  /** Includes soft-deleted rows when `includeDeleted` is true. */
+  listWithDeleted(includeDeleted: boolean): Project[] {
+    if (!includeDeleted) return this.list();
+    const rows = this.db.prepare('SELECT * FROM projects ORDER BY updated_at DESC').all() as ProjectRow[];
+    return rows.map(toProject);
+  }
+
   advanceStage(id: string, stage: ProjectStage): void {
     this.db
       .prepare('UPDATE projects SET stage = ?, updated_at = ? WHERE id = ?')
       .run(stage, new Date().toISOString(), id);
   }
 
-  /** Moves the stage forward only; generating an old artifact must not rewind. */
-  advanceStageIfBehind(id: string, stage: ProjectStage): void {
+  /**
+   * Moves the stage forward only; generating an old artifact must not rewind.
+   * The ordering is caller-supplied because stages belong to a scenario pack, not
+   * to the store. Unknown keys are ignored rather than throwing, so a stale
+   * automation firing an old stage cannot break the project.
+   */
+  advanceStageIfBehind(id: string, stage: ProjectStage, order: readonly string[] = LEGACY_VIDEO_STAGES): void {
     const project = this.get(id);
     if (project === null) return;
-    const order: ProjectStage[] = ['topic', 'research', 'script', 'shotlist', 'package', 'published', 'review'];
-    if (order.indexOf(stage) > order.indexOf(project.stage)) this.advanceStage(id, stage);
+    const next = order.indexOf(stage);
+    const current = order.indexOf(project.stage);
+    if (next === -1) return;
+    if (current === -1 || next > current) this.advanceStage(id, stage);
   }
 
   update(id: string, patch: UpdateProjectInput): Project | null {
@@ -141,15 +168,29 @@ export class SqliteProjectStore {
       platform: patch.platform ?? current.platform,
       description: patch.description ?? current.description,
       tags: patch.tags ?? current.tags,
+      styleProfileId: patch.styleProfileId === undefined ? current.styleProfileId : patch.styleProfileId,
+      scenarioId: patch.scenarioId ?? current.scenarioId,
+      stage: patch.stage ?? current.stage,
       updatedAt: new Date().toISOString(),
     });
 
     this.db
       .prepare(
-        `UPDATE projects SET title = ?, platform = ?, description = ?, tags = ?, updated_at = ?
+        `UPDATE projects SET title = ?, platform = ?, description = ?, tags = ?, style_profile_id = ?,
+           scenario_id = ?, stage = ?, updated_at = ?
          WHERE id = ? AND deleted_at IS NULL`,
       )
-      .run(next.title, next.platform, next.description, JSON.stringify(next.tags), next.updatedAt, id);
+      .run(
+        next.title,
+        next.platform,
+        next.description,
+        JSON.stringify(next.tags),
+        next.styleProfileId,
+        next.scenarioId,
+        next.stage,
+        next.updatedAt,
+        id,
+      );
     return next;
   }
 

@@ -110,10 +110,13 @@ describe('R1 checklist gate', () => {
     const response = await fetch(`${baseUrl}/v1/projects/${projectId}/checklist`);
     const body = (await response.json()) as { ready: boolean; missing: string[]; items: unknown[] };
     expect(body.ready).toBe(false);
-    expect(body.missing).toContain('script');
-    expect(body.items.length).toBe(6);
+    // Checklist keys are now `<stage>:<artifactKind>` because stages are
+    // scenario-defined; the video pack's script stage still gates the export.
+    expect(body.missing).toContain('script:script');
+    expect(body.items.some((item: { key: string }) => item.key === 'script:script')).toBe(true);
     // The shot list is optional and must not block the export gate.
-    expect(body.items.find((item: { key: string }) => item.key === 'shotlist')?.required).toBe(false);
+    expect(body.items.find((item: { key: string }) => item.key === 'shotlist:shot-list')?.required).toBe(false);
+    expect(body.items.find((item: { key: string }) => item.key === 'style')?.required).toBe(false);
   });
 
   it('refuses to export when the checklist is incomplete', async () => {
@@ -123,7 +126,7 @@ describe('R1 checklist gate', () => {
     expect(response.status).toBe(409);
     const body = (await response.json()) as { error: { code: string }; missing: string[] };
     expect(body.error.code).toBe('CHECKLIST_INCOMPLETE');
-    expect(body.missing).toContain('topic');
+    expect(body.missing).toContain('topic:topic-card');
   });
 
   it('does not create an export file when the checklist fails', async () => {

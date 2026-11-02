@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import type React from 'react';
-import { ApiError, api, apiExtra, type BudgetSettings, type GrantTool, type ModelInfo } from '../api';
+import { ApiError, api, apiExtra, type BudgetSettings, type GrantTool, type ModelInfo, type StyleProfile } from '../api';
 import { AppShell } from '../components/AppShell';
 import { useTheme, type ThemeMode } from '../lib/theme';
 import { formatCny } from '../lib/format';
 
-type Tab = 'models' | 'memory' | 'grants' | 'budget' | 'appearance';
+type Tab = 'models' | 'styles' | 'memory' | 'grants' | 'budget' | 'appearance';
 
 type EmbeddingStatus = {
   modelId: string | null;
@@ -41,6 +41,9 @@ export function SettingsPage(): React.ReactElement {
           <button aria-pressed={tab === 'models'} onClick={() => setTab('models')}>
             模型
           </button>
+          <button aria-pressed={tab === 'styles'} onClick={() => setTab('styles')}>
+            风格
+          </button>
           <button aria-pressed={tab === 'memory'} onClick={() => setTab('memory')}>
             记忆
           </button>
@@ -57,6 +60,7 @@ export function SettingsPage(): React.ReactElement {
 
         <section>
           {tab === 'models' && <ModelsPanel />}
+          {tab === 'styles' && <StylePanel />}
           {tab === 'memory' && <MemorySettingsPanel />}
           {tab === 'grants' && <GrantsPanel />}
           {tab === 'budget' && <BudgetPanel />}
@@ -498,6 +502,202 @@ function BudgetPanel(): React.ReactElement {
         </button>
       </div>
     </div>
+  );
+}
+
+function StylePanel(): React.ReactElement {
+  const [styles, setStyles] = useState<StyleProfile[]>([]);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [name, setName] = useState('');
+  const [tone, setTone] = useState('');
+  const [audience, setAudience] = useState('');
+  const [banned, setBanned] = useState('');
+  const [notes, setNotes] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const result = await apiExtra.styles();
+      setStyles(result.styles);
+      setError(null);
+    } catch (cause) {
+      setError(cause instanceof ApiError || cause instanceof Error ? cause.message : String(cause));
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const reset = (): void => {
+    setEditingId(null);
+    setName('');
+    setTone('');
+    setAudience('');
+    setBanned('');
+    setNotes('');
+  };
+
+  const edit = (style: StyleProfile): void => {
+    setEditingId(style.id);
+    setName(style.name);
+    setTone(style.tone);
+    setAudience(style.audience);
+    setBanned(style.bannedWords.join('、'));
+    setNotes(style.notes);
+    setNotice(null);
+    setError(null);
+  };
+
+  const save = async (): Promise<void> => {
+    if (name.trim() === '') return;
+    setBusy(true);
+    setNotice(null);
+    try {
+      await apiExtra.saveStyle({
+        ...(editingId === null ? {} : { id: editingId }),
+        name: name.trim(),
+        tone: tone.trim(),
+        audience: audience.trim(),
+        bannedWords: banned
+          .split(/[、,，\s]+/)
+          .map((word) => word.trim())
+          .filter((word) => word !== ''),
+        notes: notes.trim(),
+      });
+      setNotice(editingId === null ? '风格已创建' : '风格已更新');
+      reset();
+      await load();
+    } catch (cause) {
+      setError(cause instanceof ApiError || cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (style: StyleProfile): Promise<void> => {
+    setBusy(true);
+    try {
+      await apiExtra.deleteStyle(style.id);
+      if (editingId === style.id) reset();
+      setNotice('风格已删除，已挂载的项目自动解除');
+      await load();
+    } catch (cause) {
+      setError(cause instanceof ApiError || cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="panel">
+        <div className="panel-head">
+          <span className="panel-title">风格档案</span>
+          <span className="hint">语气、受众与禁用词会随生成一起发给模型；项目在概览页挂载</span>
+        </div>
+        {styles.length === 0 ? (
+          <p className="hint">还没有风格档案。先建一个，之后每个项目都能复用。</p>
+        ) : (
+          <ul className="model-list">
+            {styles.map((style) => (
+              <li key={style.id} className="model-row">
+                <div className="model-main">
+                  <span className="label">{style.name}</span>
+                  {style.tone !== '' && <span className="hint">语气：{style.tone}</span>}
+                  {style.audience !== '' && <span className="hint">受众：{style.audience}</span>}
+                  <span className="hint">
+                    禁用词：{style.bannedWords.length === 0 ? '无' : style.bannedWords.join('、')}
+                  </span>
+                </div>
+                <div className="row wrap">
+                  <button className="btn sm" onClick={() => edit(style)}>
+                    编辑
+                  </button>
+                  <button className="btn sm ghost danger-text" disabled={busy} onClick={() => void remove(style)}>
+                    删除
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+        {notice !== null && <p className="hint">{notice}</p>}
+        {error !== null && <p className="error-text">{error}</p>}
+      </div>
+
+      <div className="panel">
+        <div className="panel-head">
+          <span className="panel-title">{editingId === null ? '新建风格' : '编辑风格'}</span>
+          <span className="hint">禁用词用顿号或逗号分隔，命中时检查表会标出但不阻止导出</span>
+        </div>
+        <div className="form-grid">
+          <label>
+            名称
+            <input
+              className="input"
+              aria-label="风格名称"
+              value={name}
+              placeholder="例如：理性分析"
+              onChange={(event) => setName(event.target.value)}
+            />
+          </label>
+          <label>
+            目标受众
+            <input
+              className="input"
+              aria-label="目标受众"
+              value={audience}
+              placeholder="例如：B 站知识区 1-30 万粉"
+              onChange={(event) => setAudience(event.target.value)}
+            />
+          </label>
+        </div>
+        <label className="stack">
+          语气
+          <input
+            className="input"
+            aria-label="语气"
+            value={tone}
+            placeholder="例如：短句、先给结论再给证据、少用感叹号"
+            onChange={(event) => setTone(event.target.value)}
+          />
+        </label>
+        <label className="stack">
+          禁用词
+          <input
+            className="input"
+            aria-label="禁用词"
+            value={banned}
+            placeholder="赋能、抓手、闭环"
+            onChange={(event) => setBanned(event.target.value)}
+          />
+        </label>
+        <label className="stack">
+          补充要求
+          <textarea
+            className="input textarea"
+            rows={2}
+            aria-label="补充要求"
+            value={notes}
+            placeholder="例如：每段不超过 120 字，必须有具体数字"
+            onChange={(event) => setNotes(event.target.value)}
+          />
+        </label>
+        <div className="row">
+          <button className="btn primary" disabled={busy || name.trim() === ''} onClick={() => void save()}>
+            {busy ? '保存中…' : editingId === null ? '创建风格' : '保存修改'}
+          </button>
+          {editingId !== null && (
+            <button className="btn ghost" onClick={reset}>
+              取消编辑
+            </button>
+          )}
+        </div>
+      </div>
+    </>
   );
 }
 

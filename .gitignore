@@ -19,3 +19,13 @@ secrets.json
 *.db-wal
 *.db-shm
 apps/desktop/src-tauri/gen/
+
+# demo.py output (regenerated, not curated)
+docs/screenshots-demo/
+
+# scratch space used during development
+.tmp/
+
+# Python bytecode
+__pycache__/
+*.py[cod]

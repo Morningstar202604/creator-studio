@@ -11,8 +11,11 @@ const KIND_FILTERS = [
   { value: 'research-notes', label: '资料卡' },
   { value: 'script', label: '脚本' },
   { value: 'shot-list', label: '分镜' },
+  { value: 'subtitle', label: '字幕' },
   { value: 'publish-pack', label: '发布包' },
   { value: 'review-report', label: '复盘' },
+  { value: 'outline', label: '大纲' },
+  { value: 'chapter', label: '章节' },
 ];
 
 export function LibraryPage(): React.ReactElement {
@@ -66,7 +69,7 @@ export function LibraryPage(): React.ReactElement {
         subtitle={
           loading
             ? '加载中…'
-            : `${items.length} 个产物 · 跨 ${totals.projects} 个项目 · 累计播放 ${formatNumber(totals.views)}`
+            : `${items.length} 个产物（当前筛选） · 库内共 ${totals.artifacts} 个 · 跨 ${totals.projects} 个项目 · 累计播放 ${formatNumber(totals.views)}`
         }
       >
         <button className="btn" onClick={() => void load()}>

@@ -22,6 +22,7 @@ describe('ProjectSchema', () => {
       stage: 'script',
       workspacePath: 'C:/Users/x/CreatorStudio/proj-1',
       styleProfileId: null,
+      scenarioId: 'video',
       description: '讲清楚 AI 对初级岗位的结构性影响',
       tags: ['AI', '就业'],
       createdAt: iso,
@@ -31,13 +32,33 @@ describe('ProjectSchema', () => {
     expect(ProjectSchema.parse(value)).toEqual(value);
   });
 
-  it('rejects an unknown stage', () => {
+  it('accepts a scenario-defined stage that is not a video stage', () => {
+    // Stages are pack data now; the schema only enforces the key shape. Whether a
+    // stage exists in the project's pack is checked by the daemon.
+    const novel = {
+      id: 'p1',
+      ownerId: 'u1',
+      title: 't',
+      platform: 'bilibili',
+      stage: 'premise',
+      scenarioId: 'novel',
+      workspacePath: null,
+      styleProfileId: null,
+      createdAt: iso,
+      updatedAt: iso,
+      deletedAt: null,
+    };
+    expect(ProjectSchema.parse(novel).stage).toBe('premise');
+  });
+
+  it('rejects a stage key that is not url-safe', () => {
     const bad = {
       id: 'p1',
       ownerId: 'u1',
       title: 't',
       platform: 'bilibili',
-      stage: 'editing',
+      stage: 'Not A Stage',
+      scenarioId: 'novel',
       workspacePath: null,
       styleProfileId: null,
       createdAt: iso,
