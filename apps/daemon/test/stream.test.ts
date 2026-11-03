@@ -208,7 +208,8 @@ describe('R2 live push', () => {
       new Promise<ParsedEvent>((_, reject) => setTimeout(() => reject(new Error('live event timed out')), 4000)),
     ]);
 
-    expect(['step.started', 'error']).toContain(pushed.type);
+    // Step 1 begins immediately; its wire name is AG-UI's STEP_STARTED.
+    expect(['STEP_STARTED', 'RUN_ERROR', 'step.started', 'error']).toContain(pushed.type);
     expect(pushed.data.runId).toBe(runId);
 
     controller.abort();
@@ -294,6 +295,8 @@ describe('SSE event naming', () => {
       if (match !== null) found = match[1] ?? '';
     }
     controller.abort();
-    expect(found).toBe('run.error');
+    // `error` is renamed to AG-UI's RUN_ERROR so it cannot be mistaken for the
+    // browser's own transport-error event.
+    expect(found).toBe('RUN_ERROR');
   });
 });

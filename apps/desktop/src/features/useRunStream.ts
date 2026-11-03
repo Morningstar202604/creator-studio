@@ -60,8 +60,11 @@ export function useRunStream(
       }
     };
 
-    // `error` is renamed on the wire (see daemon sseEventName) because it collides
-    // with EventSource's built-in transport error event.
+    // The daemon names lifecycle events with AG-UI's vocabulary (STEP_STARTED,
+    // TOOL_CALL_START, …) so other client libraries can parse them, and keeps the
+    // internal names for events AG-UI has no equivalent for. Listen to both: the
+    // handler already deduplicates by `seq`, so a name that appears twice costs
+    // nothing, and this keeps the UI working against an older daemon.
     const types = [
       'step.started',
       'step.finished',
@@ -71,6 +74,12 @@ export function useRunStream(
       'budget.warning',
       'run.finished',
       'run.error',
+      'STEP_STARTED',
+      'STEP_FINISHED',
+      'TOOL_CALL_START',
+      'TOOL_CALL_RESULT',
+      'RUN_FINISHED',
+      'RUN_ERROR',
     ];
     for (const type of types) source.addEventListener(type, handler as EventListener);
 

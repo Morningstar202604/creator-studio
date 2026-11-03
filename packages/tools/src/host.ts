@@ -4,6 +4,7 @@ import { evaluateGrant } from './grants.js';
 import { PathEscapeError, resolveInsideWorkspace } from './path.js';
 import {
   ToolError,
+  type ToolAnnotations,
   type ToolCallContext,
   type ToolCallResult,
   type ToolDefinition,
@@ -44,11 +45,24 @@ export class ToolHost {
     this.tools.set(definition.name, definition as unknown as ToolDefinition<never, unknown>);
   }
 
-  list(): Array<{ name: string; risk: string; approvalKind: string | null }> {
+  /**
+   * Tool catalogue for `/v1/tools`.
+   *
+   * `annotations` is passed through verbatim, using MCP's vocabulary, so a client
+   * (or another agent runtime) can tell which calls are safe to batch without
+   * knowing anything about this codebase.
+   */
+  list(): Array<{
+    name: string;
+    risk: string;
+    approvalKind: string | null;
+    annotations?: ToolAnnotations;
+  }> {
     return [...this.tools.values()].map((tool) => ({
       name: tool.name,
       risk: tool.risk,
       approvalKind: tool.approvalKind,
+      ...(tool.annotations === undefined ? {} : { annotations: tool.annotations }),
     }));
   }
 

@@ -2,6 +2,51 @@
 
 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号用语义化版本。
 
+## [0.18.0] - 2026-11-04
+
+这一轮做三件事：把 agent 协议这层补到能与生态对话，拆掉过大的文件，
+把 README 从功能清单改成能看懂的东西。
+
+### 新增
+
+- **MCP 风格工具注解**：五个内置工具都声明 `readOnlyHint` / `destructiveHint` /
+  `idempotentHint` / `openWorldHint`，`/v1/tools` 原样透出。任何理解 MCP 的客户端
+  不用写映射就能判断哪些调用可以批量、哪些必须确认。
+- **A2A Agent Card**：`GET /.well-known/agent-card.json` 返回名称、版本、协议版本、
+  能力与三个技能（generate-artifact / run-agent / export-package）。
+  `security: []` 是刻意的——daemon 没有鉴权，宣布一个不存在的安全方案比不声明更糟。
+- **AG-UI 事件名**：生命周期事件在线上用 AG-UI 的词汇（`STEP_STARTED`、
+  `TOOL_CALL_START`、`RUN_FINISHED`、`RUN_ERROR`），payload 仍带内部 `type`，
+  旧客户端不受影响。AG-UI 没有对应项的事件（`approval.requested`、`budget.warning`）
+  保留原名——编一个不存在的标准名比诚实的自定义名更糟。
+- **生成前护栏**：空上下文与提示注入形状的输入在调模型前拒绝，不再花一次钱才发现
+  输入没用。刻意不设长度下限：`选题` 两个字是合法简报，拒绝它是护栏在发明产品规则。
+- **AGENTS.md**：给编码 agent 的项目指引（命令、规则、坑），与 README 分工。
+- **docs/AGENT-HARNESS.md**：12 个参考项目的深度学习记录——MCP / A2A / AG-UI /
+  OpenTelemetry 四层各实现了什么、刻意不做什么、以及逐项对比表。
+
+### 重构
+
+- **`server.ts` 2852 → 2716 行**：工具注册抽到 `tools-registry.ts`，发布包 README
+  抽到 `package-readme.ts`。两者都是纯逻辑，与 HTTP 表面无关。
+- README 从 12 章压到 8 章，加一张架构图；中英两版同步。
+
+### 验证
+
+- `pnpm verify` 退出 0：**668 passed / 0 skipped**（daemon 187 项，新增 6 项：
+  3 条 SSE 命名 + 6 条生成护栏）。
+- 三入口实测：`creator-studio.exe` 用 GNU 工具链重建（4m17s）并真实启动，
+  窗口标题「稿台」；CLI `health` / `new` / `gen`×5 / `checklist` / `publish` 全通；
+  Web + daemon 同源托管正常。
+- 用户视角 23 项断言全通过（建项目 → 每个页面取数 → 五类产物 → 检查表全绿 →
+  导出 7 文件 zip → 字幕 → 指标 → 复盘 → 阶段到 review）。
+
+### 说明
+
+- 浏览器巡检的「控件消失」检测已知不可靠，原因与实测数据写在
+  `docs/VERIFICATION.md`。它仍能可靠抓崩溃、404、卡死对话框与控制台错误；
+  交互正确性由 Vitest 套件覆盖。
+
 ## [0.17.2] - 2026-11-03
 
 ### 新增

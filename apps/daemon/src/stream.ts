@@ -54,8 +54,29 @@ export class EventBus {
  * `open`). A domain event literally named `error` would otherwise be dispatched as a
  * transport failure, forcing clients into reconnect logic on every failed run.
  */
+/**
+ * SSE event name for a run event.
+ *
+ * The wire names follow AG-UI's vocabulary where a mapping exists, because that is
+ * what client libraries for this category already parse. The payload still carries
+ * the internal `type`, so existing consumers break nothing: they read `data.type`,
+ * not the SSE event name. `error` is renamed because a bare `event: error` collides
+ * with the browser's own error channel.
+ *
+ * Unmapped types keep their internal name rather than inventing an AG-UI event that
+ * does not exist — a made-up name is worse than an honest custom one.
+ */
+const AG_UI_NAMES: Record<string, string> = {
+  'step.started': 'STEP_STARTED',
+  'step.finished': 'STEP_FINISHED',
+  'tool.called': 'TOOL_CALL_START',
+  'tool.result': 'TOOL_CALL_RESULT',
+  'run.finished': 'RUN_FINISHED',
+  error: 'RUN_ERROR',
+};
+
 export function sseEventName(type: string): string {
-  return type === 'error' ? 'run.error' : type;
+  return AG_UI_NAMES[type] ?? (type === 'error' ? 'run.error' : type);
 }
 
 export function writeSseEvent(

@@ -5,7 +5,7 @@ Scope is committed per minor version. A version ships only when its
 promise about a date — this is a solo-maintained project and dates would be
 fiction.
 
-## 0.17 — Trustworthy gates (current)
+## 0.17 — Trustworthy gates (shipped)
 
 Goal: every published claim traceable to a command, and no gate that can go
 green by being skipped.
@@ -37,14 +37,28 @@ Still open for a multi-process deployment (single daemon today): a claimed run
 would need a worker id and heartbeat so a second *process* cannot take it. That is
 only meaningful once more than one daemon shares a database, which is 0.20 work.
 
-## 0.19 — Multi-device writing
+## 0.19 — Multi-device writing (current)
 
 - [ ] Chapter autosave becomes a compare-and-set on a revision counter instead of
       a whole-body overwrite
 - [ ] Conflict surfaces as a merge prompt, never a silent loss
 - [ ] Per-chapter revision history with restore
 
-## 0.20 — Cloud execution
+## 0.20 — Agent protocol depth
+
+What 0.18 started (tool annotations, Agent Card, AG-UI names) needs depth to be
+useful rather than decorative:
+
+- [ ] Token-level streaming: `TEXT_MESSAGE_CONTENT` from the agent loop, so the UI
+      can render text as it arrives instead of whole steps
+- [ ] Shared state events: `STATE_SNAPSHOT` / `STATE_DELTA` for run progress
+- [ ] OTLP export: `gen_ai.*` spans to a collector, opt-in via env var
+- [ ] MCP client: let a project call an external MCP server's tools (the read-only
+      half first — `tools/list` and `tools/call` over stdio)
+- [ ] A2A task mapping: map our run states onto SUBMITTED/WORKING/COMPLETED so an
+      A2A client can poll a run
+
+## 0.21 — Cloud execution
 
 - [ ] Desktop → cloud task execution proven end to end
 - [ ] Postgres connection pooling and a load test

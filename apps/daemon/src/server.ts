@@ -41,6 +41,9 @@ import {
   openDatabase,
 } from '@creator-studio/store-sqlite';
 import { EventBus, SSE_HEARTBEAT_MS, writeHeartbeat, writeSseEvent } from './stream.js';
+import { checkGenerationInput } from './generation-guard.js';
+import { registerFileTools } from './tools-registry.js';
+import { buildPublishSummary } from './package-readme.js';
 import { isGenerateKind } from './generate.js';
 import { buildChecklist, buildZip, exportFileName, isExportableKind } from './publish.js';
 import { buildDocx, buildMarkdown, collectChapters, countChars, MANUSCRIPT_MAX_CHARS } from './manuscript.js';
@@ -170,110 +173,6 @@ const DEFAULT_AGENTS: AgentSpec[] = [
   },
 ];
 
-function registerFileTools(host: ToolHost, workspaceRoot: string): void {
-  const read: ToolDefinition<{ path: string }, { content: string; bytes: number }> = {
-    name: 'fs.read',
-    risk: 'low',
-    approvalKind: null,
-    pathArg: 'path',
-    inputSchema: (input) => {
-      if (typeof input !== 'object' || input === null) throw new ToolError('INVALID_INPUT', 'input must be object');
-      const path = (input as Record<string, unknown>).path;
-      if (typeof path !== 'string') throw new ToolError('INVALID_INPUT', 'path required');
-      return { path };
-    },
-    execute: async (input) => {
-      const { readFileSync } = await import('node:fs');
-      const content = readFileSync(join(workspaceRoot, input.path), 'utf8');
-      return { content, bytes: Buffer.byteLength(content) };
-    },
-  };
-
-  const write: ToolDefinition<{ path: string; text: string }, { bytes: number; path: string }> = {
-    name: 'fs.write',
-    risk: 'medium',
-    approvalKind: null,
-    pathArg: 'path',
-    inputSchema: (input) => {
-      const record = input as Record<string, unknown>;
-      if (typeof record.path !== 'string' || typeof record.text !== 'string') {
-        throw new ToolError('INVALID_INPUT', 'path and text required');
-      }
-      return { path: record.path, text: record.text };
-    },
-    execute: async (input) => {
-      const { writeFileSync } = await import('node:fs');
-      const target = join(workspaceRoot, input.path);
-      mkdirSync(dirname(target), { recursive: true });
-      writeFileSync(target, input.text, 'utf8');
-      return { bytes: Buffer.byteLength(input.text), path: input.path };
-    },
-  };
-
-  const del: ToolDefinition<{ path: string }, { deleted: string }> = {
-    name: 'fs.delete',
-    risk: 'high',
-    approvalKind: 'delete',
-    pathArg: 'path',
-    inputSchema: (input) => {
-      const path = (input as Record<string, unknown>).path;
-      if (typeof path !== 'string') throw new ToolError('INVALID_INPUT', 'path required');
-      return { path };
-    },
-    execute: async (input) => {
-      const { rmSync } = await import('node:fs');
-      rmSync(join(workspaceRoot, input.path), { force: true });
-      return { deleted: input.path };
-    },
-  };
-
-  host.register(read);
-  host.register(write);
-  host.register(del);
-  registerResearchTools(host, workspaceRoot);
-}
-
-/**
- * Tools for the research stage. `fs.list` is a read-only map of one workspace
- * directory; `http.fetch` goes through the guarded fetcher so an agent cannot
- * use it to reach loopback services or internal networks.
- */
-function registerResearchTools(host: ToolHost, workspaceRoot: string): void {
-  // No `pathArg` here on purpose: ToolHost's path sandbox requires a path, which
-  // would make "list the workspace root" impossible. `listDirectory` applies
-  // `resolveInsideWorkspace` itself, which is the other accepted sandbox shape.
-  const list: ToolDefinition<{ path?: string; limit?: number }, { path: string; entries: ListEntry[]; truncated: boolean }> = {
-    name: 'fs.list',
-    risk: 'low',
-    approvalKind: null,
-    inputSchema: (input) => {
-      const record = typeof input === 'object' && input !== null ? (input as Record<string, unknown>) : {};
-      const path = record.path === undefined ? '' : record.path;
-      if (typeof path !== 'string') throw new ToolError('INVALID_INPUT', 'path must be a string');
-      const limit = typeof record.limit === 'number' ? Math.min(Math.max(Math.trunc(record.limit), 1), 500) : 200;
-      return { path, limit };
-    },
-    execute: async (input) => listDirectory(input.path ?? '', { workspaceRoot, limit: input.limit ?? 200 }),
-  };
-
-  const fetchTool: ToolDefinition<{ url: string }, { url: string; title: string; text: string; truncated: boolean }> = {
-    name: 'http.fetch',
-    risk: 'medium',
-    approvalKind: null,
-    inputSchema: (input) => {
-      const url = typeof input === 'object' && input !== null ? (input as Record<string, unknown>).url : undefined;
-      if (typeof url !== 'string' || url.trim() === '') throw new ToolError('INVALID_INPUT', 'url required');
-      return { url };
-    },
-    execute: async (input) => {
-      const page = await fetchPage(input.url);
-      return { url: page.finalUrl, title: page.title, text: page.text, truncated: page.truncated };
-    },
-  };
-
-  host.register(list as never);
-  host.register(fetchTool as never);
-}
 
 export async function createDaemon(options: DaemonOptions): Promise<Daemon> {
   mkdirSync(dirname(options.dbPath), { recursive: true });
@@ -577,6 +476,72 @@ function isAutomationKind(value: string): value is 'topic-card' | 'research-note
   };
 
   // ---------------------------------------------------------------- health
+
+  /**
+   * Agent Card, following A2A's discovery format.
+   *
+   * The point is not that this daemon talks A2A today; it is that another agent
+   * runtime can read one document and learn what this one is, what it can do, and
+   * how to reach it — instead of reading our source. Fields we cannot honestly fill
+   * (a public endpoint behind a tunnel) are omitted rather than faked.
+   */
+  app.get('/.well-known/agent-card.json', async (request) => {
+    // Host header is authoritative for the URL a client actually reached; no
+    // fallback port is invented because a wrong URL is worse than a relative one.
+    const host = request.headers.host ?? '127.0.0.1:7878';
+    const origin = `${request.protocol}://${host}`;
+    return {
+      name: 'Creator Studio',
+      description:
+        'Local-first production desk for solo creators. Scenario-driven pipelines, contract-checked artifacts, approval-gated tools.',
+      version: options.appVersion ?? '0.0.0-dev',
+      protocolVersion: '0.3.0',
+      url: origin,
+      preferredTransport: 'JSONRPC',
+      capabilities: {
+        streaming: true,
+        pushNotifications: false,
+        stateTransitionHistory: true,
+      },
+      defaultInputModes: ['application/json', 'text/plain'],
+      defaultOutputModes: ['application/json', 'text/markdown'],
+      skills: [
+        {
+          id: 'generate-artifact',
+          name: 'Generate a structured artifact',
+          description:
+            'Produce one pipeline artifact (topic card, research notes, script, shot list, publish pack, outline, chapter, subtitles, review) for a project.',
+          tags: ['content', 'generation', 'structured-output'],
+          examples: ['Generate three topic candidates for a Bilibili video about AI hiring'],
+          inputModes: ['application/json'],
+          outputModes: ['application/json', 'text/markdown'],
+        },
+        {
+          id: 'run-agent',
+          name: 'Run the tool-using agent',
+          description:
+            'Execute a multi-step agent run with tool calls, approval pauses and resumable transcripts.',
+          tags: ['agent', 'tools', 'approval'],
+          examples: ['Read the workspace brief and write an 800-word opening into script/opening.md'],
+          inputModes: ['text/plain'],
+          outputModes: ['application/json'],
+        },
+        {
+          id: 'export-package',
+          name: 'Export a publish package',
+          description:
+            'Gate on the project checklist, then build a local ZIP with per-file sha256 manifest. Never uploads to a platform.',
+          tags: ['export', 'packaging'],
+          examples: ['Export the publish package for project 7f3a…'],
+          inputModes: ['application/json'],
+          outputModes: ['application/zip', 'application/json'],
+        },
+      ],
+      // No security scheme is advertised because the daemon binds loopback only and
+      // has no authentication: claiming one would be a lie a client might rely on.
+      security: [],
+    };
+  });
 
   app.get('/health', async () => ({
     ok: true,
@@ -934,8 +899,12 @@ function isAutomationKind(value: string): value is 'topic-card' | 'research-note
         },
       });
     }
-    if (typeof body.context !== 'string' || body.context.trim() === '') {
-      return reply.code(400).send({ error: { code: 'INVALID_INPUT', message: 'context is required' } });
+    // Guarded before a model call rather than after: an empty or injection-shaped
+    // context would otherwise cost a paid round trip to discover it was useless.
+    const context = typeof body.context === 'string' ? body.context : '';
+    const guard = checkGenerationInput({ context });
+    if (!guard.ok) {
+      return reply.code(400).send({ error: { code: guard.code, message: guard.message } });
     }
     const requestSources = Array.isArray(body.sources)
       ? body.sources.filter((url): url is string => typeof url === 'string').slice(0, MAX_SOURCES)
@@ -1011,7 +980,7 @@ function isAutomationKind(value: string): value is 'topic-card' | 'research-note
       const result = await generateArtifact(generateDeps, {
         projectId: id,
         kind: body.kind,
-        context: body.context,
+        context,
         includeUpstream: body.includeUpstream !== false,
         ...(attachedStyle === null
           ? {}
@@ -2744,33 +2713,4 @@ ${body.text}`,
 
 }
 
-function buildPublishSummary(artifacts: Array<{ kind: string; path: string }>): string | null {
-  const lines: string[] = ['# 发布包', '', '本发布包由稿台 Creator Studio 生成。', ''];
-  const order = ['topic-card', 'research-notes', 'script', 'shot-list', 'subtitle', 'publish-pack'];
-  for (const kind of order) {
-    const found = artifacts.find((artifact) => artifact.kind === kind);
-    if (found === undefined) continue;
-    lines.push(`## ${labelOf(kind)}`, '', `- 文件：${found.path}`, '');
-  }
-  lines.push('生成时间：' + new Date().toISOString());
-  return lines.join('\n');
-}
 
-function labelOf(kind: string): string {
-  switch (kind) {
-    case 'topic-card':
-      return '选题';
-    case 'research-notes':
-      return '资料';
-    case 'script':
-      return '脚本';
-    case 'shot-list':
-      return '分镜';
-    case 'subtitle':
-      return '字幕';
-    case 'publish-pack':
-      return '包装';
-    default:
-      return kind;
-  }
-}

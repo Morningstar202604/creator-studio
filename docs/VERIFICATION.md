@@ -98,9 +98,29 @@ CLICKS 659  FINDINGS 0
 The sweep derives routes from the projects and scenario packs present in the
 database, so it exercises whatever data exists rather than a hardcoded list. It
 skips controls whose purpose is to delete or reset data (`DESTRUCTIVE_LABELS`):
-clicking one removes the row that hosts the next control, which would be reported
-as a vanished control although the app behaved correctly. Those paths are covered
-by focused tests instead.
+clicking one removes the row that hosts the next control.
+
+### What the sweep can and cannot prove
+
+It reliably catches: a click that crashes the page, navigates to a 404 route, opens
+a dialog that will not close, throws an unexpected console error, or returns an
+unexplained HTTP status. Those are the failures that only appear when a real
+browser runs a real click.
+
+It does **not** reliably catch "a control vanished", and the check for that is
+known to produce false positives. The reason is structural: the sweep clicks every
+control on a route from a fresh document, and those clicks change the same state
+the next check reads — creating cards, deleting rows, switching views, opening
+drawers. Identity by visible text fails because labels carry live counts
+(`章节卡 6`); identity by DOM path fails because React re-renders the list. Both
+were tried; both produce findings on correct behaviour, and the count drifts run to
+run (2, then 4, then 2 on identical data).
+
+The honest position is that this check is a smoke detector, not a regression
+suite. Interaction correctness is covered by the Vitest suites, which assert
+specific outcomes, and by the layout harness, which asserts geometry. Anyone
+re-running the sweep should expect 0–4 findings, all of the
+"control-disappeared" kind, and should treat a *new* kind of finding as the signal.
 
 ## Test stability
 

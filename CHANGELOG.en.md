@@ -8,6 +8,63 @@ The authoritative changelog is written in Chinese in [`CHANGELOG.md`](CHANGELOG.
 this file carries the same release boundaries for English readers and will be
 kept in sync from 0.17.0 onward.
 
+## [0.18.0] - 2026-11-04
+
+Three things this round: make the agent-protocol layer speak to the ecosystem,
+break up the file that had grown too large, and turn the README from a feature
+inventory into something a person can read.
+
+### Added
+
+- **MCP-style tool annotations.** All five built-in tools declare `readOnlyHint` /
+  `destructiveHint` / `idempotentHint` / `openWorldHint`, passed through by
+  `/v1/tools`. A client that understands MCP can tell which calls are safe to batch
+  and which need confirmation, with no custom mapping.
+- **A2A Agent Card.** `GET /.well-known/agent-card.json` publishes name, version,
+  protocol version, capabilities and three skills (generate-artifact, run-agent,
+  export-package). `security: []` is deliberate: the daemon has no auth, and
+  declaring a scheme it does not enforce is worse than declaring none.
+- **AG-UI event names.** Lifecycle events travel as `STEP_STARTED`,
+  `TOOL_CALL_START`, `RUN_FINISHED`, `RUN_ERROR`; the payload still carries the
+  internal `type`, so existing clients are unaffected. Events with no AG-UI
+  equivalent keep their own names — inventing a standard name that does not exist
+  would be worse than an honest custom one.
+- **Pre-flight generation guard.** Empty context and injection-shaped input are
+  refused before a model call instead of after a paid round trip. Deliberately no
+  minimum length: "选题" is a legitimate brief, and rejecting it would be the guard
+  inventing a product rule.
+- **AGENTS.md** — project guidance for coding agents (commands, enforced rules,
+  traps), kept separate from the human README.
+- **docs/AGENT-HARNESS.md** — a study of twelve reference projects: what we
+  implement from MCP / A2A / AG-UI / OpenTelemetry, what we deliberately do not,
+  and a capability-by-capability comparison.
+
+### Changed
+
+- **`server.ts` 2852 → 2716 lines.** Tool registration moved to
+  `tools-registry.ts`, the package README builder to `package-readme.ts`. Both are
+  pure logic unrelated to the HTTP surface.
+- README cut from twelve sections to eight, with an architecture diagram; both
+  languages updated together.
+
+### Verification
+
+- `pnpm verify` exits 0: **668 passed / 0 skipped** (daemon 187, including six new
+  tests for SSE naming and the generation guard).
+- All three entry points exercised: `creator-studio.exe` rebuilt with the GNU
+  toolchain (4m17s) and launched — window title "稿台"; CLI `health` / `new` /
+  `gen`×5 / `checklist` / `publish` all pass; web + daemon same-origin hosting works.
+- A 23-assertion user-perspective walkthrough passed end to end: create project →
+  every page returns data → five artifacts → checklist green → seven-file ZIP →
+  subtitles → metrics → review → stage reaches `review`.
+
+### Note
+
+- The browser sweep's "control disappeared" check is known unreliable; the reason
+  and the measured drift are documented in `docs/VERIFICATION.md`. It still
+  reliably catches crashes, 404s, stuck dialogs and console errors; interaction
+  correctness is covered by the Vitest suites.
+
 ## [0.17.2] - 2026-11-03
 
 ### Added

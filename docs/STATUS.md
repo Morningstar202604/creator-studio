@@ -4,11 +4,11 @@
 > reproduced with the command next to it, the claim is wrong — fix the claim or
 > fix the code, not the reader's expectations.
 
-- **Version:** 0.17.0
+- **Version:** 0.18.0
 - **Branch model:** trunk-based. `main` is the only long-lived branch and the only
   branch that receives pushes. Feature branches live for one change and are deleted
   after merge.
-- **Last verified:** 2026-11-02 on Windows 11 (Node 24.20, pnpm 12.11.2)
+- **Last verified:** 2026-11-04 on Windows 11 (Node 24.20, pnpm 12.11.2)
 
 ## What is verified
 
@@ -18,14 +18,16 @@ Each row was executed on the date above. Commands are the evidence.
 |---|---|---|
 | Lint | `pnpm lint` | exit 0, zero warnings |
 | Build + typecheck | `pnpm verify` | all 9 workspace packages |
-| Unit / integration tests | `pnpm -r test` | 657 passed, 0 skipped |
+| Unit / integration tests | `pnpm -r test` | 659 passed, 0 skipped |
 | Offline model smoke | `node scripts/smoke-model.mjs --mode offline` | pass, no credentials |
 | Security audit | `node scripts/security-audit.mjs` | 200 files, all checks pass |
 | Contrast | `python scripts/check-contrast.py` | all token pairs pass |
 | Layout + screenshots | `python scripts/shoot.py` | 26 pages, 0 console errors, 0 overflow |
-| Click + keyboard sweep | `python scripts/click-sweep.py` | 659 clicks, 0 findings (destructive controls excluded by design) |
+| Click + keyboard sweep | `python scripts/click-sweep.py` | catches crashes/404s/stuck dialogs; the "vanished control" check is unreliable by design (see VERIFICATION.md) |
 | Full pipeline (API) | see `docs/VERIFICATION.md` | 7 artifacts, checklist green, zip exported |
 | Postgres tenant isolation | `pnpm test:postgres` | 9 passed against a real cluster (auto-started) |
+| Agent protocols | `GET /.well-known/agent-card.json`, `/v1/tools` | Agent Card served; tool annotations exposed |
+| Three entry points | exe build+launch, CLI, web | all three exercised on 2026-11-04 |
 
 ## What is not verified
 
