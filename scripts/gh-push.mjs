@@ -70,19 +70,41 @@ try {
 }
 
 /**
- * Walks the local tree and uploads every file as a blob, building nested trees
- * bottom-up. Blobs are content-addressed, so re-uploading an unchanged file is
- * cheap on GitHub's side and this stays simple rather than clever.
+ * Reuses blobs the remote already has.
+ *
+ * A full upload of 354 files is 354 round trips and takes minutes; most of them
+ * are unchanged. The remote tree is read once, and any file whose local git blob
+ * hash matches the remote entry is skipped entirely. Git's blob id is a SHA-1 of
+ * the same content, so the comparison is exact, not a heuristic.
  */
+const remoteBlobs = new Map();
+if (parentSha !== null) {
+  const parentCommit = await call('GET', `/repos/${repo}/git/commits/${parentSha}`);
+  const rootTree = await call('GET', `/repos/${repo}/git/trees/${parentCommit.tree.sha}?recursive=1`);
+  for (const entry of rootTree.tree ?? []) {
+    if (entry.type === 'blob') remoteBlobs.set(entry.path, entry.sha);
+  }
+  console.log(`remote already has ${remoteBlobs.size} blobs`);
+}
+
 const blobCache = new Map();
+let uploaded = 0;
 
 async function uploadBlob(path) {
   if (blobCache.has(path)) return blobCache.get(path);
+  // Local blob id: identical content means the remote already stores this byte for
+  // byte, so no upload is needed.
+  const localSha = git('rev-parse', `HEAD:${path}`);
+  if (remoteBlobs.get(path) === localSha) {
+    blobCache.set(path, localSha);
+    return localSha;
+  }
   const content = execFileSync('git', ['show', `HEAD:${path}`], { maxBuffer: 1 << 28 });
   const blob = await call('POST', `/repos/${repo}/git/blobs`, {
     content: content.toString('base64'),
     encoding: 'base64',
   });
+  uploaded += 1;
   blobCache.set(path, blob.sha);
   return blob.sha;
 }
@@ -121,7 +143,7 @@ async function buildTree(prefix) {
 
 const rootEntries = await buildTree('');
 const tree = await call('POST', `/repos/${repo}/git/trees`, { tree: rootEntries });
-console.log(`tree ${tree.sha.slice(0, 7)} with ${rootEntries.length} top-level entries`);
+console.log(`tree ${tree.sha.slice(0, 7)} — ${uploaded} blobs uploaded, ${files.length - uploaded} reused`);
 
 const commit = await call('POST', `/repos/${repo}/git/commits`, {
   message: localMessage,
