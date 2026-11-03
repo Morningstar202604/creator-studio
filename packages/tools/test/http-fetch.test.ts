@@ -176,7 +176,28 @@ describe('R3 fetch guards', () => {
   });
 });
 
-describe('R4 text extraction', () => {
+// Regression from a real environment: a TUN-mode proxy answered DNS for every
+// public name with 198.18.x.x, and the guard refused example.com. That is correct
+// behaviour — 198.18.0.0/15 is reserved for benchmarking and must never appear as
+// a public target — so the behaviour is pinned here rather than relaxed.
+describe('R4 benchmark range is not a public target', () => {
+  it('treats 198.18.0.0/15 as private', () => {
+    for (const address of ['198.18.0.1', '198.18.0.32', '198.19.255.254']) {
+      expect(isPrivateAddress(address), address).toBe(true);
+    }
+  });
+
+  it('refuses a host that resolves into the benchmark range', async () => {
+    await expect(
+      fetchPage('https://example.com/', {
+        lookup: async () => [{ address: '198.18.0.32', family: 4 }],
+        fetchImpl: async () => fakeResponse('<html><body>x</body></html>'),
+      }),
+    ).rejects.toThrow(/BLOCKED_HOST/);
+  });
+});
+
+describe('R5 text extraction', () => {
   it('keeps block structure and decodes entities', () => {
     const text = htmlToText('<p>一</p><p>二</p>&#65;&#x42;');
     expect(text.split('\n').filter((line) => line !== '')).toEqual(['一', '二', 'AB']);

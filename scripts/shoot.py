@@ -45,6 +45,7 @@ SHOTS = [
     ("31-memory-dark", None, "dark", 1440, 900, "memory"),
     ("32-settings-memory", "#/settings", "light", 1440, 900, "settings-memory"),
     ("33-settings-styles", "#/settings", "light", 1440, 900, "settings-styles"),
+    ("34-settings-about", "#/settings", "light", 1440, 900, "settings-about"),
 ]
 
 
@@ -106,7 +107,7 @@ def main() -> int:
             route = hash_route
             if target == "workspace":
                 route = f"#/p/{pid}"
-            elif target == "settings-memory" or target == "settings-styles":
+            elif target in ("settings-memory", "settings-styles", "settings-about"):
                 route = "#/settings"
             elif target is not None and target != "palette":
                 route = f"#/p/{pid}/{target}"
@@ -126,6 +127,9 @@ def main() -> int:
                 page.wait_for_timeout(500)
             if target == "settings-styles":
                 page.get_by_role("button", name="风格").click()
+                page.wait_for_timeout(500)
+            if target == "settings-about":
+                page.get_by_role("button", name="关于").click()
                 page.wait_for_timeout(500)
             if target == "memory":
                 page.get_by_label("检索项目记忆").fill("初级程序员")

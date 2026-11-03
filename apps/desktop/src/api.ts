@@ -61,6 +61,8 @@ export type Approval = {
 export type Health = {
   ok: boolean;
   version: number;
+  /** Product version of the running daemon, e.g. "0.17.1". */
+  appVersion?: string;
   apiVersion?: number;
   capabilities?: string[];
   workspaceRoot: string;

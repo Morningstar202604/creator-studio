@@ -1,11 +1,20 @@
 import { useCallback, useEffect, useState } from 'react';
 import type React from 'react';
-import { ApiError, api, apiExtra, type BudgetSettings, type GrantTool, type ModelInfo, type StyleProfile } from '../api';
+import {
+  ApiError,
+  api,
+  apiExtra,
+  type BudgetSettings,
+  type GrantTool,
+  type Health,
+  type ModelInfo,
+  type StyleProfile,
+} from '../api';
 import { AppShell } from '../components/AppShell';
 import { useTheme, type ThemeMode } from '../lib/theme';
 import { formatCny } from '../lib/format';
 
-type Tab = 'models' | 'styles' | 'memory' | 'grants' | 'budget' | 'appearance';
+type Tab = 'models' | 'styles' | 'memory' | 'grants' | 'budget' | 'appearance' | 'about';
 
 type EmbeddingStatus = {
   modelId: string | null;
@@ -56,6 +65,9 @@ export function SettingsPage(): React.ReactElement {
           <button aria-pressed={tab === 'appearance'} onClick={() => setTab('appearance')}>
             外观
           </button>
+          <button aria-pressed={tab === 'about'} onClick={() => setTab('about')}>
+            关于
+          </button>
         </nav>
 
         <section>
@@ -65,6 +77,7 @@ export function SettingsPage(): React.ReactElement {
           {tab === 'grants' && <GrantsPanel />}
           {tab === 'budget' && <BudgetPanel />}
           {tab === 'appearance' && <AppearancePanel />}
+          {tab === 'about' && <AboutPanel />}
         </section>
       </div>
     </AppShell>
@@ -728,6 +741,59 @@ function AppearancePanel(): React.ReactElement {
           </button>
         ))}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Version and runtime facts. The first question in any bug report is "which build
+ * are you running", and until now the app had no way to answer it: the daemon's
+ * /health reported an API version, not a product version.
+ */
+function AboutPanel(): React.ReactElement {
+  const [health, setHealth] = useState<Health | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void api
+      .health()
+      .then((result) => {
+        if (active) setHealth(result);
+      })
+      .catch((cause) => {
+        if (active) setError(cause instanceof Error ? cause.message : String(cause));
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const rows: Array<[string, string]> = [
+    ['版本', health?.appVersion ?? '读取中…'],
+    ['API 版本', health === null ? '读取中…' : String(health.apiVersion ?? health.version)],
+    ['操作系统', health?.os ?? '读取中…'],
+    ['工作区', health?.workspaceRoot ?? '读取中…'],
+    ['进程', health === null ? '读取中…' : String(health.pid)],
+  ];
+
+  return (
+    <div className="panel">
+      <div className="panel-head">
+        <span className="panel-title">关于</span>
+      </div>
+      {error !== null && <p className="hint">无法连接 daemon：{error}</p>}
+      <dl className="about-facts">
+        {rows.map(([label, value]) => (
+          <div key={label}>
+            <dt>{label}</dt>
+            <dd className="mono">{value}</dd>
+          </div>
+        ))}
+      </dl>
+      <p className="hint">
+        报问题时请附上这里的版本号与操作系统：那是判断「是不是已知缺陷」的第一条线索。
+      </p>
     </div>
   );
 }

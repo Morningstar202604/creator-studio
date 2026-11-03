@@ -1,5 +1,9 @@
 # 稿台 Creator Studio
 
+[![CI](https://github.com/Morningstar202604/creator-studio/actions/workflows/ci.yml/badge.svg)](https://github.com/Morningstar202604/creator-studio/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%E2%89%A522-339933.svg)](package.json)
+
 **给一个人独立交付作品的本地优先创作台。**
 
 视频、小说、播客、课程、长文——每一样都是一个项目，有既定的流水线、带版本的产物，
@@ -37,7 +41,7 @@
 |---|---|
 | ![发布](docs/screenshots/08-publish-light.png) | ![深色](docs/screenshots/15-projects-dark.png) |
 
-[`docs/screenshots/`](docs/screenshots/) 里有七十五张截图：每个页面的明暗两套、
+[`docs/screenshots/`](docs/screenshots/) 里有七十六张截图：每个页面的明暗两套、
 1440 / 1100 / 900 三档宽度，以及命令面板、记忆检索、场景包、关系图、叙事时间轴与写作台。
 演示录屏：[`docs/media/demo.mp4`](docs/media/demo.mp4)。
 

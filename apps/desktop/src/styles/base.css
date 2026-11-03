@@ -3059,3 +3059,27 @@ a:hover {
     transparent 4px 8px
   );
 }
+
+/* About panel: one fact per row. `.kv` is a four-column grid for paired stats and
+   collapses into an unreadable line when used for a vertical list. */
+.about-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 18px;
+  margin: 0 0 14px;
+  font-size: 13px;
+}
+
+.about-facts div {
+  display: contents;
+}
+
+.about-facts dt {
+  color: var(--muted);
+}
+
+.about-facts dd {
+  margin: 0;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}

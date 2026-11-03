@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7,6 +7,24 @@ import { dirname } from 'node:path';
 import { ModelGateway } from '@creator-studio/model-gateway';
 import { createDaemon } from './server.js';
 import { SecretVault } from './vault.js';
+
+/**
+ * Reads the product version from this package's manifest.
+ *
+ * The daemon runs from `apps/daemon/dist`, so the manifest is two levels up. A
+ * missing or malformed file is not fatal — reporting `0.0.0-dev` is better than
+ * refusing to start over a cosmetic string.
+ */
+function readPackageVersion(): string {
+  try {
+    const manifest = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), 'utf8')) as {
+      version?: string;
+    };
+    return typeof manifest.version === 'string' ? manifest.version : '0.0.0-dev';
+  } catch {
+    return '0.0.0-dev';
+  }
+}
 
 function parseArgs(argv: string[]): Record<string, string> {
   const out: Record<string, string> = {};
@@ -91,6 +109,7 @@ async function main(): Promise<void> {
 
   const webRoot = noWeb ? undefined : findWebRoot();
   const daemon = await createDaemon({
+    appVersion: readPackageVersion(),
     dbPath: join(dataDir, 'creator-studio.db'),
     workspaceRoot,
     deviceId: 'local-device',

@@ -8,6 +8,32 @@ The authoritative changelog is written in Chinese in [`CHANGELOG.md`](CHANGELOG.
 this file carries the same release boundaries for English readers and will be
 kept in sync from 0.17.0 onward.
 
+## [0.17.2] - 2026-11-03
+
+### Added
+
+- **An "About" panel in settings**: product version, API version, operating
+  system, workspace and process id. `/health` reported only an API version, so a
+  user could not answer "which build am I running" — the first question in any bug
+  report. The daemon now reads its version from `package.json`.
+- **README badges**: CI status, MIT licence, Node requirement.
+- **GitHub topics**: 15 tags set identically on all three repositories.
+
+### Fixed
+
+- The About panel first used `.kv`, a four-column grid meant for paired stats, and
+  collapsed five rows into one unreadable line. It now uses `.about-facts`, a
+  two-column definition list.
+- The screenshot suite gained `34-settings-about`: 27 pages, 76 screenshots.
+
+### Verification
+
+- Two new cases in `packages/tools/test/http-fetch.test.ts`: `198.18.0.0/15` (the
+  benchmarking range) must count as private, and a host resolving into it must be
+  refused. This came from a real environment: a TUN proxy resolved every public
+  name to `198.18.x.x`, the guard refused correctly, and the behaviour is now
+  pinned rather than left to chance.
+
 ## [0.17.1] - 2026-11-03
 
 ### Fixed

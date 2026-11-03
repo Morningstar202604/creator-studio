@@ -95,6 +95,11 @@ export type DaemonOptions = {
    * network. Turn on when the configured model actually serves embeddings.
    */
   remoteEmbeddings?: boolean;
+  /**
+   * Product version reported by /health. Injected rather than read from disk so
+   * the daemon stays a pure function of its options (tests pin it explicitly).
+   */
+  appVersion?: string;
   /** Secret resolver (env/vault). Injecting one keeps tests hermetic. */
   resolveSecret?: (ref: string) => string | null;
   secretStore?: { set(name: string, value: string): string; delete(name: string): void };
@@ -577,6 +582,9 @@ function isAutomationKind(value: string): value is 'topic-card' | 'research-note
     ok: true,
     version: 1 as const,
     apiVersion: 3,
+    // The product version, distinct from apiVersion: 'which build am I running'
+    // is the first question in any bug report, and the daemon could not answer it.
+    appVersion: options.appVersion ?? '0.0.0-dev',
     capabilities: [...CAPABILITIES],
     workspaceRoot: options.workspaceRoot,
     os: process.platform,

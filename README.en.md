@@ -1,5 +1,9 @@
 # Creator Studio
 
+[![CI](https://github.com/Morningstar202604/creator-studio/actions/workflows/ci.yml/badge.svg)](https://github.com/Morningstar202604/creator-studio/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%E2%89%A522-339933.svg)](package.json)
+
 **A local-first production desk for people who ship creative work alone.**
 
 Video, novels, podcasts, courses, long-form writing — each is a project with a
@@ -40,7 +44,7 @@ uploaded to a platform on your behalf.
 |---|---|
 | ![Publish](docs/screenshots/08-publish-light.png) | ![Dark](docs/screenshots/15-projects-dark.png) |
 
-Seventy-five screenshots live in [`docs/screenshots/`](docs/screenshots/): every page
+Seventy-six screenshots live in [`docs/screenshots/`](docs/screenshots/): every page
 in light and dark, 1440 / 1100 / 900 px widths, the command palette, memory search,
 scenario packs, the relation graph, the narrative timeline and the writing desk.
 Demo recording: [`docs/media/demo.mp4`](docs/media/demo.mp4).

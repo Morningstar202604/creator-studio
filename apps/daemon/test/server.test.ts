@@ -141,6 +141,10 @@ describe('daemon HTTP surface', () => {
     expect(status).toBe(200);
     expect(body.ok).toBe(true);
     expect(body.os).toBe(process.platform);
+    // The product version is what a bug report needs; apiVersion alone says which
+    // protocol the daemon speaks, not which build the user is running.
+    expect(typeof body.appVersion).toBe('string');
+    expect(body.appVersion.length).toBeGreaterThan(0);
   });
 
   it('lists the registered tools', async () => {
