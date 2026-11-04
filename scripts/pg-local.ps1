@@ -28,8 +28,34 @@ $bin = Join-Path $root '.tmp\pg\node_modules\@embedded-postgres\windows-x64\nati
 $data = Join-Path $root '.tmp\pgdata'
 $log = Join-Path $root '.tmp\pg.log'
 
+# The cluster binaries are a development-only dependency: they are not in the
+# repository (a 60 MB platform binary has no business in git) and not in
+# package.json (no runtime path imports them). Fetch them on first use so a fresh
+# clone can run the gate with one command instead of failing with homework.
 if (-not (Test-Path (Join-Path $bin 'postgres.exe'))) {
-  Write-Error "embedded postgres is missing. Run: npm install --no-save --prefix .tmp/pg embedded-postgres@18.6.0-beta.19"
+  Write-Output 'embedded postgres not found; installing it once into .tmp/pg'
+  $installRoot = Join-Path $root '.tmp\pg'
+  New-Item -ItemType Directory -Force -Path $installRoot | Out-Null
+  # npm needs a manifest to treat this as a project of its own; without one it
+  # walks up into the workspace and fails with an internal error.
+  $manifest = Join-Path $installRoot 'package.json'
+  if (-not (Test-Path $manifest)) {
+    '{ "name": "pg-bootstrap", "private": true, "version": "0.0.0" }' | Set-Content -Path $manifest -Encoding utf8
+  }
+  Push-Location $installRoot
+  try {
+    npm install --no-save --no-audit --no-fund --loglevel=error embedded-postgres@18.6.0-beta.19
+    if ($LASTEXITCODE -ne 0) {
+      Write-Error 'could not install embedded-postgres; set CLOUD_TEST_DATABASE_URL to skip this path'
+      exit 2
+    }
+  } finally {
+    Pop-Location
+  }
+}
+
+if (-not (Test-Path (Join-Path $bin 'postgres.exe'))) {
+  Write-Error 'embedded postgres installed but postgres.exe is still missing; check the .tmp/pg install'
   exit 2
 }
 
