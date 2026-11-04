@@ -43,6 +43,9 @@
 
 ### 说明
 
+- **干净克隆能一条命令跑通**：`pg-local.ps1` 缺 embedded-postgres 时自己装
+  （含自己的 package.json，否则 npm 会向上走进 pnpm workspace 报内部错误）。
+  `pnpm verify` 在全新克隆上退出 0，668 项通过。
 - 浏览器巡检的「控件消失」检测已知不可靠，原因与实测数据写在
   `docs/VERIFICATION.md`。它仍能可靠抓崩溃、404、卡死对话框与控制台错误；
   交互正确性由 Vitest 套件覆盖。

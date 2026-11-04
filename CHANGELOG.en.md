@@ -60,6 +60,10 @@ inventory into something a person can read.
 
 ### Note
 
+- **A fresh clone passes with one command.** `pg-local.ps1` now installs
+  embedded-postgres on first use (with its own `package.json`, without which npm
+  walks up into the pnpm workspace and fails internally). `pnpm verify` exits 0 on
+  a clean clone: 668 tests, 0 skipped.
 - The browser sweep's "control disappeared" check is known unreliable; the reason
   and the measured drift are documented in `docs/VERIFICATION.md`. It still
   reliably catches crashes, 404s, stuck dialogs and console errors; interaction
