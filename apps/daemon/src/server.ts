@@ -103,6 +103,12 @@ export type DaemonOptions = {
    * the daemon stays a pure function of its options (tests pin it explicitly).
    */
   appVersion?: string;
+  /**
+   * The origin the built UI is served from, when known (e.g. `http://127.0.0.1:7878`).
+   * Only this origin and the Tauri pseudo-origins are allowed to call the API from a
+   * browser; anything else must opt in through `CREATOR_STUDIO_DEV_ORIGIN`.
+   */
+  publicOrigin?: string;
   /** Secret resolver (env/vault). Injecting one keeps tests hermetic. */
   resolveSecret?: (ref: string) => string | null;
   secretStore?: { set(name: string, value: string): string; delete(name: string): void };
@@ -240,16 +246,28 @@ export async function createDaemon(options: DaemonOptions): Promise<Daemon> {
   registerFileTools(toolHost, options.workspaceRoot);
 
   const agents = options.agents ?? DEFAULT_AGENTS;
-  const grants = options.grants ?? [
-    { id: 'g-read', deviceId: options.deviceId, tool: 'fs.read', scope: '**', mode: 'auto' },
-    { id: 'g-list', deviceId: options.deviceId, tool: 'fs.list', scope: '**', mode: 'auto' },
-    { id: 'g-write', deviceId: options.deviceId, tool: 'fs.write', scope: '**', mode: 'auto' },
+  // Defaults are seeded into SQLite once, then SQLite is the only source of truth.
+  // Previously the defaults were a local constant and the settings API wrote to the
+  // database that nothing read: a user could set "deny" for fs.write, see 200, and
+  // still have the agent write. A security control that is displayed but not
+  // enforced is worse than no control, because the user stops looking.
+  const DEFAULT_GRANTS: Array<{ id: string; deviceId: string; tool: string; scope: string; mode: 'auto' | 'ask' | 'deny' }> = [
+    { id: 'g-read', deviceId: options.deviceId, tool: 'fs.read', scope: '**', mode: 'auto' as const },
+    { id: 'g-list', deviceId: options.deviceId, tool: 'fs.list', scope: '**', mode: 'auto' as const },
+    { id: 'g-write', deviceId: options.deviceId, tool: 'fs.write', scope: '**', mode: 'auto' as const },
     // Outbound fetch is allowed by default because every call passes the SSRF,
     // robots and size guards; the audit trail still records each target.
-    { id: 'g-fetch', deviceId: options.deviceId, tool: 'http.fetch', scope: 'https://**', mode: 'auto' },
-    { id: 'g-fetch-http', deviceId: options.deviceId, tool: 'http.fetch', scope: 'http://**', mode: 'auto' },
-    { id: 'g-delete', deviceId: options.deviceId, tool: 'fs.delete', scope: '**', mode: 'ask' },
+    { id: 'g-fetch', deviceId: options.deviceId, tool: 'http.fetch', scope: 'https://**', mode: 'auto' as const },
+    { id: 'g-fetch-http', deviceId: options.deviceId, tool: 'http.fetch', scope: 'http://**', mode: 'auto' as const },
+    { id: 'g-delete', deviceId: options.deviceId, tool: 'fs.delete', scope: '**', mode: 'ask' as const },
   ];
+  if (options.grants === undefined) {
+    settingsStore.seedGrants(options.deviceId, DEFAULT_GRANTS);
+  }
+  const effectiveGrants = (): Array<{ id: string; deviceId: string; tool: string; scope: string; mode: 'auto' | 'ask' | 'deny' }> => {
+    const stored = settingsStore.listGrants(options.deviceId);
+    return stored.length > 0 ? (stored as typeof DEFAULT_GRANTS) : (options.grants ?? DEFAULT_GRANTS);
+  };
 
   const appendEvent = runStore.appendEvent.bind(runStore);
   runStore.appendEvent = (event) => {
@@ -293,7 +311,7 @@ export async function createDaemon(options: DaemonOptions): Promise<Daemon> {
     },
     workspaceRoot: options.workspaceRoot,
     deviceId: options.deviceId,
-    grantsFor: () => grants,
+    grantsFor: () => effectiveGrants(),
     now: clock,
   });
 
@@ -301,18 +319,79 @@ export async function createDaemon(options: DaemonOptions): Promise<Daemon> {
   const app = Fastify({ logger: options.logger ?? false, bodyLimit: 8 * 1024 * 1024 });
   await app.register(cors, {
     origin: (origin, callback) => {
+      // No Origin header means a non-browser client (curl, the CLI, another
+      // process): those are not subject to the same-origin policy at all, so
+      // allowing them changes nothing about the browser threat model.
       if (origin === undefined) return callback(null, true);
-      const allowed =
-        origin.startsWith('http://127.0.0.1:') ||
-        origin.startsWith('http://localhost:') ||
-        origin === 'tauri://localhost' ||
-        origin === 'http://tauri.localhost' ||
-        origin === 'https://tauri.localhost';
-      callback(null, allowed);
+
+      // Everything below is about which *web page* may call this API. The daemon
+      // serves its own UI on one origin, and the Tauri shell uses a pseudo-origin.
+      // Allowing every `http://127.0.0.1:*` meant any local dev server, any other
+      // Electron app, or any XSS on a localhost page could read all projects and
+      // call write endpoints. Only the origins this build actually serves are
+      // allowed, plus an explicit opt-in for split-frontend development.
+      const allowedOrigins = new Set<string>([
+        'tauri://localhost',
+        'http://tauri.localhost',
+        'https://tauri.localhost',
+      ]);
+      // Same-origin requests are already covered by CORS not applying; this only
+      // matters when the UI is served from the daemon itself on a known port.
+      if (options.publicOrigin !== undefined) allowedOrigins.add(options.publicOrigin);
+      const extra = process.env['CREATOR_STUDIO_DEV_ORIGIN'];
+      if (extra !== undefined && extra !== '') allowedOrigins.add(extra);
+
+      callback(null, allowedOrigins.has(origin));
     },
   });
 
   const AUTOMATION_KINDS: readonly string[] = ['topic-card', 'research-notes', 'publish-pack'];
+
+/**
+ * Whether a model base URL is acceptable.
+ *
+ * Local models are a supported case, so loopback is allowed — but only when the
+ * caller says the model is local. The dangerous combination is "remote-looking URL
+ * on a private host", which is how a key would be exfiltrated to another process on
+ * this machine. Anything non-http(s), or with credentials embedded, is refused.
+ */
+/**
+ * Whether a model base URL is acceptable.
+ *
+ * Local model servers (Ollama, LM Studio, a gateway on the same machine) are a
+ * supported configuration, so loopback cannot simply be banned. What must not happen
+ * is a *remote* profile pointing at an internal address: that turns the daemon into a
+ * credential courier, sending whatever is in the vault to another process on this
+ * host. The check therefore rejects non-http(s), embedded credentials, and private
+ * ranges unless the profile is explicitly marked local.
+ */
+function isAllowedModelBaseUrl(raw: string, declaredLocal: boolean): boolean {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+  if (url.username !== '' || url.password !== '') return false;
+
+  const host = url.hostname.toLowerCase().replace(/^\[/, '').replace(/\]$/, '');
+  const isLoopback =
+    host === 'localhost' || host === '127.0.0.1' || host === '::1' || host.endsWith('.localhost');
+  const isPrivate =
+    /^10\./.test(host) ||
+    /^192\.168\./.test(host) ||
+    /^172\.(1[6-9]|2[0-9]|3[01])\./.test(host) ||
+    /^169\.254\./.test(host) ||
+    host.startsWith('fc') ||
+    host.startsWith('fd') ||
+    host === '0.0.0.0';
+
+  if ((isLoopback || isPrivate) && !declaredLocal) {
+    return false;
+  }
+  return true;
+}
 
 function isAutomationKind(value: string): value is 'topic-card' | 'research-notes' | 'publish-pack' {
   return AUTOMATION_KINDS.includes(value);
@@ -1217,12 +1296,23 @@ function isAutomationKind(value: string): value is 'topic-card' | 'research-note
     try {
       const id = typeof body.id === 'string' ? body.id : randomUUID();
       const apiKey = typeof body.apiKey === 'string' && body.apiKey !== '' ? body.apiKey : null;
-      const apiKeyRef =
-        apiKey !== null
-          ? setSecret(id, apiKey)
-          : typeof body.apiKeyRef === 'string'
-            ? body.apiKeyRef
-            : 'env:MODEL_API_KEY';
+      // The client may send a literal key (stored in the vault) or nothing. It may
+      // NOT name a vault/env reference: `env:PATH` or `vault:default` would make the
+      // next /test call send that value as a Bearer token to a baseUrl the caller
+      // also chose. The reference is always generated here.
+      const apiKeyRef = apiKey !== null ? setSecret(id, apiKey) : 'env:MODEL_API_KEY';
+
+      // A caller-supplied baseUrl is where prompts and, if a key is configured, that
+      // key get sent. Refuse obvious internal targets so a local page or another
+      // process cannot use the daemon as a credential courier.
+      if (!isAllowedModelBaseUrl(body.baseUrl, body.isLocal === true)) {
+        return reply.code(400).send({
+          error: {
+            code: 'INVALID_INPUT',
+            message: 'baseUrl must be an http(s) URL on a public host; loopback and private ranges are refused',
+          },
+        });
+      }
       const profile = settingsStore.upsertModel({
         id,
         name: body.name,

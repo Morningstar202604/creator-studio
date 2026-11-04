@@ -17,7 +17,8 @@ const approval = (overrides: Partial<Approval> = {}): Approval => ({
   runId: 'r1',
   stepId: 's1',
   kind: 'delete',
-  payload: {},
+  // Mirror what the agent loop records: the tool input, which includes the target.
+  payload: { path: 'a.md' },
   decision: 'approved',
   requestedAt: '2026-10-21T10:00:00.000Z',
   decidedAt: '2026-10-21T10:01:00.000Z',
@@ -169,14 +170,44 @@ describe('R4 approval gate', () => {
       input: { path: 'a.md' },
       context: ctx([grant({ tool: 'fs.delete' })], approval()),
     });
+    // Same target, same approval: the second call must be refused as consumed.
     const second = await host.execute({
       name: 'fs.delete',
-      input: { path: 'b.md' },
+      input: { path: 'a.md' },
       context: ctx([grant({ tool: 'fs.delete' })], approval()),
     });
     expect(first.ok).toBe(true);
     expect(second.ok).toBe(false);
     if (!second.ok) expect(second.code).toBe('APPROVAL_CONSUMED');
+  });
+
+  // Regression: an approval named a target the user saw, and the executed call could
+  // name a different one. Consent for `a.md` must not delete `b.md`.
+  // Regression: grants matched the caller's raw string, so a rule denying
+  // `secret/**` could be walked around with `assets/../secret/diary.md`.
+  it('matches a scoped grant against the resolved path, not the caller string', async () => {
+    const { host } = makeHost();
+    const result = await host.execute({
+      name: 'fs.probe',
+      input: { path: 'assets/../secret/diary.md' },
+      context: ctx([
+        grant({ tool: 'fs.probe', scope: 'secret/**', mode: 'deny' }),
+        grant({ tool: 'fs.probe', scope: '**', mode: 'auto' }),
+      ]),
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe('DENIED_BY_RULE');
+  });
+
+  it('refuses an approval whose recorded target differs from the call', async () => {
+    const { host } = makeHost();
+    const result = await host.execute({
+      name: 'fs.delete',
+      input: { path: 'b.md' },
+      context: ctx([grant({ tool: 'fs.delete' })], approval({ payload: { path: 'a.md' } })),
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe('APPROVAL_REQUIRED');
   });
 
   it('requires approval when the grant mode is ask', async () => {

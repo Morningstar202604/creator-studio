@@ -139,6 +139,7 @@ export class AgentRunner {
       stepCount += 1;
       const outcome = await this.executeOne(
         { ...run, status: 'running' },
+        agent,
         stepId,
         stepCount,
         call,
@@ -282,7 +283,7 @@ export class AgentRunner {
       this.persistMessages(run.id, [assistant], clock, transcript.length - 1);
 
       for (const call of calls) {
-        const outcome = await this.executeOne(run, stepId, stepCount, call, transcript, grants, null, clock);
+        const outcome = await this.executeOne(run, agent, stepId, stepCount, call, transcript, grants, null, clock);
         if (outcome !== null) {
           return { status: 'waiting_approval', approvalId: outcome.approvalId, text: accumulatedText, steps: stepCount };
         }
@@ -296,6 +297,7 @@ export class AgentRunner {
 
   private async executeOne(
     run: Run,
+    agent: AgentSpec,
     stepId: string,
     stepIndex: number,
     call: ChatToolCall,
@@ -305,6 +307,28 @@ export class AgentRunner {
     clock: () => Date,
   ): Promise<{ approvalId: string } | null> {
     const { store, toolHost } = this.ctx;
+
+    // The model chooses `call.name`; nothing stops it naming a tool this agent was
+    // never granted. `schemasFor` only shapes the prompt, so without this check a
+    // read-only agent could call fs.write and the call would succeed — the whitelist
+    // would describe intent rather than enforce it. Refuse before the approval gate
+    // so a denied tool cannot even produce an approval prompt.
+    if (!agent.tools.includes(call.name)) {
+      const refusal = `tool ${call.name} is not available to agent ${agent.id}`;
+      this.emit(run.id, 'tool.result', {
+        tool: call.name,
+        ok: false,
+        error: refusal,
+        denied: true,
+      });
+      transcript.push({
+        role: 'tool',
+        toolCallId: call.id,
+        content: JSON.stringify({ error: 'TOOL_NOT_ALLOWED', message: refusal }),
+      });
+      return null;
+    }
+
     const tool = toolHost.list().find((entry) => entry.name === call.name);
     const kind = (tool?.approvalKind ?? null) as ApprovalKind | null;
     const input = safeJson(call.argumentsJson);

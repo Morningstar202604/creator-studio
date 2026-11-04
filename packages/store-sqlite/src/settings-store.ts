@@ -135,6 +135,25 @@ export class SqliteSettingsStore {
     return rows.map(toGrant);
   }
 
+  /**
+   * Inserts default grants, but only for tools that have no row yet.
+   *
+   * Seeding must not overwrite a user's choice: a restart after setting fs.write to
+   * "deny" has to stay denied. INSERT OR IGNORE on the (device, tool, scope) key
+   * gives that for free.
+   */
+  seedGrants(deviceId: string, grants: ReadonlyArray<{ id: string; tool: string; scope: string; mode: GrantMode }>): void {
+    const insert = this.db.prepare(
+      `INSERT OR IGNORE INTO tool_grants (id, device_id, tool, scope, mode) VALUES (?, ?, ?, ?, ?)`,
+    );
+    const run = this.db.transaction(() => {
+      for (const grant of grants) {
+        insert.run(`${deviceId}:${grant.tool}:${grant.scope}`, deviceId, grant.tool, grant.scope, grant.mode);
+      }
+    });
+    run();
+  }
+
   setGrantMode(deviceId: string, tool: string, mode: GrantMode): void {
     const existing = this.db
       .prepare('SELECT id FROM tool_grants WHERE device_id = ? AND tool = ? AND scope = ?')

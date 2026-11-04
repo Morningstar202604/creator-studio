@@ -86,6 +86,24 @@ describe('R3 path sandbox', () => {
     expect(() => resolve('inside-link/a.md')).not.toThrow();
   });
 
+  // Regression: a dangling symlink looks like a missing file to realpath — the link
+  // exists, its target does not, so ENOENT comes from the target. The old code
+  // validated only the nearest existing ancestor and returned the caller's path, so
+  // a subsequent write followed the link out of the workspace.
+  it('rejects a dangling symlink at the target itself', () => {
+    const link = join(root, 'dangling.md');
+    try {
+      symlinkSync(join(outside, 'does-not-exist-yet.txt'), link, 'file');
+    } catch {
+      return; // symlinks unavailable in this environment
+    }
+    expect(() => resolve('dangling.md')).toThrowError(/dangling symlink/);
+  });
+
+  it('still accepts a brand-new file that is not a symlink', () => {
+    expect(() => resolve('brand-new-file.md')).not.toThrow();
+  });
+
   it('rejects a realpath escape even where OS symlinks are unavailable', () => {
     const fakeOutside = join(tmpdir(), 'elsewhere', 'secret.txt');
     expect(() =>

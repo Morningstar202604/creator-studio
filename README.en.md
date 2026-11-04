@@ -1,104 +1,30 @@
 <p align="center">
-  <img src="docs/brand/icon.png" alt="Creator Studio" width="96" height="96">
+  <img src="docs/brand/icon.png" alt="Creator Studio" width="88" height="88">
 </p>
 
 <h1 align="center">Creator Studio</h1>
 
-<p align="center"><strong>A local-first production desk for people who ship creative work alone.</strong></p>
+<p align="center">Turn one idea into a finished video, novel, or podcast — with the workflow, files and versions kept in one place.</p>
 
 <p align="center">
-  <a href="https://github.com/Morningstar202604/creator-studio/actions/workflows/ci.yml"><img src="https://github.com/Morningstar202604/creator-studio/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT">
-  <img src="https://img.shields.io/badge/node-%E2%89%A522-339933.svg" alt="Node 22+">
+  <img src="https://img.shields.io/badge/Windows-x64-0078D4?style=flat-square" alt="Windows">
+  <img src="https://img.shields.io/badge/tests-674%20passing%20%C2%B7%200%20skipped-brightgreen?style=flat-square" alt="tests">
+  <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT">
 </p>
 
----
+<p align="center">
+  <a href="https://github.com/Morningstar202604/creator-studio/releases/latest"><strong>Download for Windows →</strong></a>
+  &nbsp;·&nbsp;
+  <a href="README.zh.md">中文</a>
+</p>
 
-Six creative jobs — video, novels, podcasts, courses, long-form writing, shorts —
-each a project with its own pipeline, versioned artifacts and a checklist that
-gates export. Models run wherever you point them. Your files stay on your machine.
+![Workspace](docs/screenshots/02-workspace-light.png)
 
-[Quick start](#quick-start) · [How it works](#how-it-works) · [Screens](#screens) · [Architecture](#architecture) · [中文](README.md)
+## Install
 
----
+Download `CreatorStudio_0.18.0_x64-setup.exe` from [Releases](https://github.com/Morningstar202604/creator-studio/releases/latest) and run it. Needs Node.js 22 or newer on your PATH.
 
-## How it works
-
-```
-                    ┌──────────────────────────────────────────┐
-   you              │  a project                               │
-   ────┐            │                                          │
-       │            │  scenario pack (JSON)                    │
-       └───────────▶│    ├ stages: topic → research → script …  │
-                    │    ├ views:  generate / entities /        │
-                    │    │         document / board / publish / │
-                    │    │         review                       │
-                    │    └ checklist: what must exist to export │
-                    │                                          │
-                    │  artifacts (versioned, sha256, contract)  │
-                    │  cards (characters, chapters, shots …)    │
-                    └───────────────┬──────────────────────────┘
-                                    │
-              ┌─────────────────────┼─────────────────────┐
-              ▼                     ▼                     ▼
-        ┌──────────┐         ┌────────────┐        ┌──────────┐
-        │ desktop  │         │   daemon   │        │   cli    │
-        │ (Tauri)  │◀───────▶│ (Fastify)  │◀──────▶│   (cs)   │
-        └──────────┘  HTTP   └─────┬──────┘  HTTP  └──────────┘
-                                   │
-                        ┌──────────┴──────────┐
-                        ▼                     ▼
-                 ┌────────────┐        ┌─────────────┐
-                 │  SQLite    │        │  workspace  │
-                 │ runs,      │        │  real files │
-                 │ artifacts, │        │  sandboxed  │
-                 │ cards      │        │  to one dir │
-                 └────────────┘        └─────────────┘
-```
-
-A **scenario pack** is data, not code: stages, views, card fields, relations and
-checklist are all declared in JSON. Adding a creative job means writing a pack, not
-touching the engine. That is the one design decision everything else follows from.
-
-## What you get
-
-| | |
-|---|---|
-| **Six packs** | Video (7 stages) · Novel (6, with character/chapter/foreshadow cards) · Podcast · Course · Writing · Shorts |
-| **Six views** | `generate` · `entities` (kanban) · `document` (writing desk) · `board` · `publish` · `review` |
-| **Contract-checked output** | Every artifact validated against a zod schema; bad model output is coerced, retried once, then refused — never silently written |
-| **Approval gates** | Delete, write-outside-workspace and shell execution need a human decision. One approval, one use |
-| **Resumable runs** | Transcripts persisted per step; a crash marks the run `INTERRUPTED`; an approval resumes it |
-| **Provenance** | Give URLs and the daemon fetches the real pages (private hosts and non-http(s) refused, robots respected). Each fact is marked verifiable or not, with a fetch ledger and sha256 |
-| **Local export** | A ZIP with the latest of each artifact, a README and a `manifest.json` with per-file sha256. Nothing is uploaded anywhere |
-
-## Screens
-
-| Workspace | Writing desk |
-|---|---|
-| ![Workspace](docs/screenshots/02-workspace-light.png) | ![Writing](docs/screenshots/05-script-light.png) |
-
-| Topic cards, scored | Review with trends |
-|---|---|
-| ![Topics](docs/screenshots/03-topic-light.png) | ![Review](docs/screenshots/09-review-light.png) |
-
-| Publish, checklist-gated | Dark theme |
-|---|---|
-| ![Publish](docs/screenshots/08-publish-light.png) | ![Dark](docs/screenshots/15-projects-dark.png) |
-
-76 screenshots in [`docs/screenshots/`](docs/screenshots/): every page in light and
-dark, at 1440 / 1100 / 900 px. Demo: [`docs/media/demo.mp4`](docs/media/demo.mp4).
-
-## Quick start
-
-**Desktop app** (needs Node ≥ 22 and Rust to build):
-
-```bash
-pnpm install && pnpm -r build && node scripts/install-daemon-deps.mjs
-cd apps/desktop && pnpm tauri build
-```
-
-**Browser plus daemon** — fastest for development:
+Or run it from source:
 
 ```bash
 pnpm install && pnpm -r build
@@ -106,90 +32,84 @@ pnpm --filter @creator-studio/daemon start -- --port 7878
 # open http://127.0.0.1:7878/
 ```
 
-**CLI only:**
+Either way, add your model key in **Settings → Models**. OpenAI-compatible endpoints and Anthropic both work. Keys stay in a local file, never in a database or a log.
+
+## What it does
+
+Pick a scenario. Each one is a pipeline with its own stages, files and checklist.
+
+| Scenario | Pipeline |
+|---|---|
+| **Video** | topic → research → script → shot list → packaging → publish → review |
+| **Novel** | premise → world → outline → chapters → revision → submission |
+| **Podcast** | topic → research → outline → script → edit list → publish |
+| **Course** | goals → research → outline → lessons → exercises → launch |
+| **Writing** | brief → material → draft → multi-platform → assets → publish |
+| **Shorts** | hook → script → shots → subtitles → publish |
+
+The novel pipeline in action — chapters, characters, foreshadowing, and a timeline that shows which threads are still unpaid:
+
+| Writing desk | Narrative timeline |
+|---|---|
+| ![Writing](docs/screenshots/05-script-light.png) | ![Timeline](docs/screenshots/54-timeline.png) |
+
+| Cards and relations | Review with trends |
+|---|---|
+| ![Cards](docs/screenshots/04-research-light.png) | ![Review](docs/screenshots/09-review-light.png) |
+
+Every step writes a versioned file into your project folder. Nothing leaves the machine unless you point a model at a remote endpoint.
+
+## Why the output is usable
+
+Model output goes through a schema before it is saved. If the model returns `"score": "88"` instead of a number, that is corrected; if it returns prose instead of JSON, it retries once with an example; if it still fails, you get an error naming the problem — never a half-written file.
+
+Two more things that matter in daily use:
+
+- **Approval before anything destructive.** Deleting a file, writing outside the project, or running a command pauses and asks. One approval covers one action.
+- **Resume after a crash.** Every step is on disk. If the app dies mid-run, the run is marked interrupted and picks up where it stopped.
+
+## Command line
 
 ```bash
-node apps/daemon/dist/main.js --port 7878 &
-node apps/cli/dist/main.js health
+cs health
+cs new "Why your topic nobody reads" --platform bilibili
+cs gen <projectId> script "opening hook about choosing topics"
+cs publish <projectId>
 ```
 
-Then connect a model in **Settings → Models** (the key goes to
-`<dataDir>/secrets.json`, mode 0600), or set `MODEL_BASE_URL` / `MODEL_API_KEY` /
-`MODEL_NAME`. Both OpenAI-compatible endpoints and the native Anthropic protocol
-work.
+21 commands, same API as the app. Add `--url` to drive a daemon on another machine.
 
-## Architecture
+## Screens
 
-| Package | Responsibility |
+<details>
+<summary>All 76 screenshots</summary>
+
+Seventy-six in [`docs/screenshots/`](docs/screenshots/), light and dark, at 1440 / 1100 / 900 px.
+
+Demo recording: [`docs/media/demo.mp4`](docs/media/demo.mp4).
+
+</details>
+
+## Status
+
+674 tests, 0 skipped. The suite includes nine Postgres tenant-isolation tests against a real cluster, a browser pass over 27 pages (0 console errors, 0 layout overflow), and a full pipeline run against a local model stub.
+
+| Works today | Not yet |
 |---|---|
-| `apps/daemon` | The only writer. Fastify, SQLite, SSE, scheduler, secret vault |
-| `apps/desktop` | React 19 + Vite + Tauri 2 shell. Thinks in views, not pages |
-| `apps/cli` | 21 commands over the same HTTP API |
-| `packages/protocol` | Schemas, invariants, artifact contracts, output coercion |
-| `packages/tools` | Path sandbox (realpath, symlink-safe), grants, approval gate, audit, MCP-style tool annotations |
-| `packages/model-gateway` | OpenAI/Anthropic adapters, SSE parsing, budget precheck, backoff, redaction |
-| `packages/store-sqlite` | 13 migrations, repositories |
-| `packages/agent-core` | Agent loop, tool feedback, pause/resume, transcripts |
+| Six pipelines end to end, file versioning, approval gates, resume, local export, subtitle export, review loop | Live vendor models are not in CI; macOS/Linux installers are unbuilt; auto-update has not been round-tripped |
 
-Design details in [`ARCHITECTURE.md`](ARCHITECTURE.md). The agent-protocol story —
-what we implement from MCP / A2A / AG-UI and what we deliberately do not — is in
-[`docs/AGENT-HARNESS.md`](docs/AGENT-HARNESS.md).
+Known limits are listed in [`docs/STATUS.md`](docs/STATUS.md). No time-saving figure appears in this repository because none has been measured.
 
-### Security defaults
-
-The daemon binds `127.0.0.1` only. Every path goes through `resolveInsideWorkspace`
-(absolute paths, `..` and symlink escapes rejected). Markdown is sanitized with
-DOMPurify. Model output is treated as untrusted input. Keys never enter SQLite or
-logs.
-
-## Verification
+## Develop
 
 ```bash
-pnpm verify     # lint → build → typecheck → tests → smoke → audit → contrast → versions → Postgres
-```
-
-662 tests, **0 skipped**. The Postgres suite starts its own throwaway cluster and
-tears it down, so nine tenant-isolation tests that used to skip now run.
-
-What each layer proves and what it cannot is in
-[`docs/VERIFICATION.md`](docs/VERIFICATION.md). Current state, including what is
-**not** verified, is in [`docs/STATUS.md`](docs/STATUS.md). Short version:
-
-| Proven | Not proven |
-|---|---|
-| Unit, contract and store tests; offline model contract; security and contrast audits; browser layout and interaction sweeps; the full artifact pipeline against a local model stub; nine Postgres tenant tests against a real cluster | Live vendor accounts, macOS/Linux installers, the auto-update round trip, Postgres under load, the desktop→cloud execution chain, any time-saving figure |
-
-No productivity number appears anywhere in this repository, because none has been
-measured.
-
-## Known limits
-
-1. **Chapter autosave overwrites the whole body.** Two clients on one chapter will
-   overwrite each other. Single-user is safe.
-2. **The writing desk is plain Markdown.** No comments or tracked changes; complex
-   layout belongs in the exported Word file.
-3. **Default memory retrieval is lexical** (n-gram feature hash plus substring), not
-   a neural model. Point it at a provider's `/embeddings` for real semantics.
-4. **Subtitle timing is estimated** from punctuation and length; calibrate against
-   the recording.
-5. **No authentication on the daemon.** It binds loopback and trusts the local user.
-6. **Auto-update is wired but unproven.** A real old→new upgrade has not been done.
-
-## Development
-
-```bash
-pnpm verify                                          # the whole gate, same as CI
+pnpm verify                                          # lint → build → test → audit → Postgres
 node scripts/stub-model.mjs 7996                     # deterministic model stub
-node scripts/seed-demo.mjs http://127.0.0.1:7878     # presentable demo data
-python scripts/shoot.py --base http://127.0.0.1:7878 # 27 pages, layout assertions
-python scripts/click-sweep.py --base http://127.0.0.1:7878  # every control
+python scripts/shoot.py --base http://127.0.0.1:7878 # screenshots + layout assertions
 ```
 
-- Agent guidance: [`AGENTS.md`](AGENTS.md)
-- Contributing: [`CONTRIBUTING.md`](CONTRIBUTING.md) · Conduct: [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)
-- Changelog: [`CHANGELOG.en.md`](CHANGELOG.en.md) · Releases: [`docs/RELEASING.md`](docs/RELEASING.md)
-- Roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md) · API: [`docs/API.md`](docs/API.md)
+[`AGENTS.md`](AGENTS.md) has the commands and the rules an agent needs. [`docs/AGENT-HARNESS.md`](docs/AGENT-HARNESS.md) covers what we implement from MCP / A2A / AG-UI.
 
 ## License
 
-[MIT](LICENSE)
+MIT

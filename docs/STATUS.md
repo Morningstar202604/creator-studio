@@ -78,7 +78,7 @@ scripts/    gates: verify, smoke, audit, contrast, screenshots, click sweep
 
 | Question | File |
 |---|---|
-| What does it do and how do I run it | `README.md` / `README.en.md` |
+| What does it do and how do I run it | `README.en.md` / `README.en.md` |
 | How is it built | `ARCHITECTURE.md` |
 | What changed in each version | `CHANGELOG.md` |
 | What is planned | `docs/ROADMAP.md` |

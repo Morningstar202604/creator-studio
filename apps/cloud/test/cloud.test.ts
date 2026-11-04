@@ -21,8 +21,12 @@ async function api(path: string, init?: RequestInit, auth = token) {
   return { status: response.status, body: text === '' ? null : (JSON.parse(text) as any) };
 }
 
+const BOOTSTRAP = 'test-bootstrap-token';
+
 beforeAll(async () => {
-  cloud = createCloud();
+  // The first device of a deployment enrols with the bootstrap secret; later
+  // pairings are started by an already-paired device. The suite exercises both.
+  cloud = createCloud({ bootstrapToken: BOOTSTRAP });
   const port = await cloud.listen(0);
   baseUrl = `http://127.0.0.1:${port}`;
 });
@@ -32,14 +36,29 @@ afterAll(async () => {
 });
 
 describe('pairing', () => {
+  // Regression: /v1/pair/start used to take `userId` from the body with no auth, so
+  // anyone could mint a code for any account, redeem it, and hold a device token for
+  // that user. Starting a pairing now requires either a paired device of that
+  // account or the deployment bootstrap secret.
+  it('refuses an anonymous pairing request', async () => {
+    const anonymous = await api('/v1/pair/start', { method: 'POST', body: JSON.stringify({ userId: 'victim' }) }, '');
+    expect(anonymous.status).toBe(401);
+    expect(anonymous.body?.error?.code).toBe('UNAUTHENTICATED');
+  });
+
+  it('refuses a wrong bootstrap token', async () => {
+    const wrong = await api('/v1/pair/start', { method: 'POST', body: JSON.stringify({ userId: 'victim' }) }, 'not-the-token');
+    expect(wrong.status).toBe(401);
+  });
+
   it('issues a 6-digit code', async () => {
-    const { status, body } = await api('/v1/pair/start', { method: 'POST', body: JSON.stringify({ userId: 'u1' }) }, '');
+    const { status, body } = await api('/v1/pair/start', { method: 'POST', body: JSON.stringify({ userId: 'u1' }) }, BOOTSTRAP);
     expect(status).toBe(201);
     expect(body.code).toMatch(/^\d{6}$/);
   });
 
   it('completes pairing and returns a device token', async () => {
-    const start = await api('/v1/pair/start', { method: 'POST', body: JSON.stringify({ userId: 'u1' }) }, '');
+    const start = await api('/v1/pair/start', { method: 'POST', body: JSON.stringify({ userId: 'u1' }) }, BOOTSTRAP);
     const done = await api(
       '/v1/pair/complete',
       {
@@ -55,7 +74,7 @@ describe('pairing', () => {
   });
 
   it('rejects a reused pairing code', async () => {
-    const start = await api('/v1/pair/start', { method: 'POST', body: JSON.stringify({ userId: 'u1' }) }, '');
+    const start = await api('/v1/pair/start', { method: 'POST', body: JSON.stringify({ userId: 'u1' }) }, BOOTSTRAP);
     await api('/v1/pair/complete', { method: 'POST', body: JSON.stringify({ code: start.body.code }) }, '');
     const again = await api('/v1/pair/complete', { method: 'POST', body: JSON.stringify({ code: start.body.code }) }, '');
     expect(again.status).toBe(400);
@@ -352,7 +371,7 @@ describe('R8 multi-tenant isolation', () => {
   async function tenant(userId: string): Promise<{ token: string; deviceId: string }> {
     // Free is 0 runs/month by design; paid plans are what exercising runs needs.
     cloud.store.setPlan(userId, 'creator');
-    const start = await api('/v1/pair/start', { method: 'POST', body: JSON.stringify({ userId }) }, '');
+    const start = await api('/v1/pair/start', { method: 'POST', body: JSON.stringify({ userId }) }, BOOTSTRAP);
     const done = await api(
       '/v1/pair/complete',
       { method: 'POST', body: JSON.stringify({ code: start.body.code, name: userId, os: 'windows' }) },

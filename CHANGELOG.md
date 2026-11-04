@@ -2,6 +2,56 @@
 
 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号用语义化版本。
 
+## [0.18.1] - 2026-11-05
+
+一轮针对性的安全审计修了七个 critical。每条都先写回归测试，再修；测试在修复前
+是红的，修复后是绿的。
+
+### 安全修复
+
+- **工具白名单只约束提示词，不约束执行**：`schemasFor` 按 `agent.tools` 过滤了发给
+  模型的工具列表，但 `executeOne` 只查全局工具表。模型返回 `fs.write` 时，只读
+  Agent 也能写文件。现在执行前校验 `agent.tools`，不匹配直接拒绝并回一条 tool 结果。
+- **审批可跨目标复用**：审批只校验 kind 和 runId，不校验工具名与目标。用户看到
+  「删除 /etc/passwd」的批准，可以被用来删 `keep.md`。现在比对审批 payload 里的
+  工具名与规范化目标，路径按相对/绝对等价比较。
+- **悬空符号链接可写穿沙箱**：目标不存在时 `realpath` 抛 ENOENT，旧代码只校验最近
+  存在祖先，然后返回调用方原路径。workspace 内放一个指向外部的悬空链接，
+  `fs.write` 就能写到外面。现在用 `lstat` 检查最终组件，且 `fs.*` 工具用
+  `resolveInsideWorkspace` 的返回值执行，不再二次 `join`。
+- **grant 设置是装饰品**：默认 grants 是本地常量，设置 API 写进 SQLite 但没人读。
+  用户把 `fs.write` 设成 deny、看到 200，Agent 照样写。现在 SQLite 是唯一事实源，
+  启动时 seed 默认值（`INSERT OR IGNORE`，不覆盖用户选择），每次运行读有效的 grant。
+- **模型配置可外带任意密钥**：客户端能传 `apiKeyRef: 'env:PATH'`，再让 `/test` 打到
+  自己的服务器，拿到环境变量或密钥库内容。现在 `apiKeyRef` 只由服务端生成；
+  `baseUrl` 拒绝私网/回环（除非声明 `isLocal`）、非 http(s) 与内嵌凭据。
+- **IPv4-mapped IPv6 绕过 SSRF 守卫**：`[::ffff:127.0.0.1]` 被 URL 解析成
+  `[::ffff:7f00:1]`，旧正则只认点分形式，于是 loopback 与云元数据地址被当公网。
+  现在按数值解析嵌入的 IPv4，并额外阻断 NAT64 与 6to4 段。
+- **DNS rebinding**：守卫解析一次、`fetch` 再解析一次，攻击者可以让第二次返回
+  loopback。现在用 `node:http(s)` 的 `lookup` 钩子把连接固定在刚验证过的地址。
+- **云端配对可接管任意账户**：`/v1/pair/start` 接受请求体里的 `userId`，无需认证。
+  两次请求就能拿到任意账户的设备令牌。现在必须由已配对设备发起，或出示部署的
+  `CLOUD_BOOTSTRAP_TOKEN`（首个设备的引导路径）；比较用常量时间。
+- **grant scope 可用等价路径绕过**：`assets/../secret/x.md` 能穿过 `secret/**` 的
+  deny 规则。现在按 `resolveInsideWorkspace` 规范化后的相对路径匹配，并把 Windows
+  反斜杠统一成 `/`。
+- **CORS 放行任意 localhost 端口**：本机任何网页都能读写项目与设置。现在只允许
+  同源 UI 与 Tauri 伪源，分离式前端开发需显式设 `CREATOR_STUDIO_DEV_ORIGIN`。
+
+### 文档
+
+- README 重写：去掉「本地优先」「可监督可恢复可审计」这类不传递信息的说法，改成
+  一句话说明、安装方式、六条流水线、产出为什么能用、截图。英文为 `README.en.md`，
+  中文为 `README.zh.md`。
+
+### 验证
+
+- `pnpm verify` 退出 0：**674 passed / 0 skipped**（tools 95、daemon 192、cloud 31，
+  含新增的安全回归测试）。
+- 手动复现 DNS rebinding：起一个真 loopback 服务，解析器第二次返回 127.0.0.1，
+  断言服务从未被访问。
+
 ## [0.18.0] - 2026-11-04
 
 这一轮做三件事：把 agent 协议这层补到能与生态对话，拆掉过大的文件，

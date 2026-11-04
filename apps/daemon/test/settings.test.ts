@@ -124,12 +124,28 @@ describe('models', () => {
 });
 
 describe('tool grants', () => {
-  it('defaults every tool to deny when no grant exists', async () => {
+  // Regression: the defaults used to be a local constant that the settings API never
+  // read, so the UI reported "deny" for every tool while the agent had "auto" for
+  // fs.read/fs.write/http.fetch. The effective grant is now the seeded one, and what
+  // this endpoint reports is what the host will enforce.
+  it('reports the seeded default grants rather than a blanket deny', async () => {
     const { body } = await api('/v1/settings/grants');
     expect(body.deviceId).toBe('dev-1');
-    for (const tool of body.tools) {
-      expect(tool.mode).toBe('deny');
-    }
+    const byTool = new Map(body.tools.map((tool: { name: string; mode: string }) => [tool.name, tool.mode]));
+    expect(byTool.get('fs.read')).toBe('auto');
+    expect(byTool.get('fs.write')).toBe('auto');
+    expect(byTool.get('fs.delete')).toBe('ask');
+  });
+
+  it('applies a deny immediately instead of only storing it', async () => {
+    const res = await api('/v1/settings/grants', {
+      method: 'POST',
+      body: JSON.stringify({ tool: 'fs.write', mode: 'deny' }),
+    });
+    expect(res.status).toBe(200);
+    const after = await api('/v1/settings/grants');
+    const entry = after.body.tools.find((tool: { name: string }) => tool.name === 'fs.write');
+    expect(entry.mode).toBe('deny');
   });
 
   it('persists a mode change', async () => {

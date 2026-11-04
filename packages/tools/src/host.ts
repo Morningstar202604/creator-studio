@@ -1,7 +1,7 @@
 import type { Approval } from '@creator-studio/protocol';
 import { MemoryAuditSink, nextAuditId, type AuditRecord, type AuditSink } from './audit.js';
 import { evaluateGrant } from './grants.js';
-import { PathEscapeError, resolveInsideWorkspace } from './path.js';
+import { PathEscapeError, resolveInsideWorkspace, toWorkspaceRelative } from './path.js';
 import {
   ToolError,
   type ToolAnnotations,
@@ -92,6 +92,7 @@ export class ToolHost {
     }
 
     let target: string;
+    let resolvedTarget: string | null = null;
     try {
       target = tool.pathArg !== undefined ? extractPath(input, tool.pathArg) : extractTarget(input);
     } catch (error) {
@@ -102,7 +103,11 @@ export class ToolHost {
 
     if (tool.pathArg !== undefined) {
       try {
-        resolveInsideWorkspace(target, {
+        // Keep the resolved absolute path: the tool must execute against the path
+        // that was actually validated, not re-join the caller's string. Discarding
+        // this result was how a dangling symlink inside the workspace could point
+        // outside it — validation saw the link's parent, execution followed the link.
+        resolvedTarget = resolveInsideWorkspace(target, {
           workspaceRoot: this.options.workspaceRoot,
           ...(this.options.platform === undefined ? {} : { platform: this.options.platform }),
           ...(this.options.realpath === undefined ? {} : { realpath: this.options.realpath }),
@@ -116,11 +121,19 @@ export class ToolHost {
       }
     }
 
+    // Match grants against the *resolved* target, never the caller's string.
+    // `assets/../secret/x.md` and `./secret/x.md` are the same file, so a rule that
+    // denies `secret/**` must see the same path the filesystem will. Without this,
+    // any scoped rule can be walked around by an equivalent path spelling.
+    const grantTarget =
+      resolvedTarget === null
+        ? target
+        : toWorkspaceRelative(resolvedTarget, this.options.workspaceRoot, this.options.platform);
     const grantDecision = evaluateGrant({
       grants: context.grants,
       deviceId: context.deviceId,
       tool: name,
-      target,
+      target: grantTarget,
     });
 
     if (grantDecision.decision === 'deny') {
@@ -133,7 +146,15 @@ export class ToolHost {
       const approval = context.approval;
       const kindMatches = tool.approvalKind === null || (approval !== null && approval.kind === tool.approvalKind);
       const runMatches = approval === null || context.runId === null || approval.runId === context.runId;
-      if (approval === null || approval.decision !== 'approved' || !kindMatches || !runMatches) {
+      // An approval is consent for *this* call, not a licence for its category. The
+      // prompt shows the user a target; if the executed target differs, the consent
+      // was for something else. Both the tool name and the normalised target are
+      // compared, and the payload (which holds the arguments the user was shown) must
+      // match the arguments about to be used.
+      const toolMatches = approval === null || approval.payload === null || approval.payload === undefined
+        ? approval !== null && approval.decision === 'approved' && approval.kind === tool.approvalKind
+        : approvalMatchesCall(approval.payload, name, resolvedTarget ?? target);
+      if (approval === null || approval.decision !== 'approved' || !kindMatches || !runMatches || !toolMatches) {
         record('deny', 'APPROVAL_REQUIRED', false, 'APPROVAL_REQUIRED');
         const wanted = tool.approvalKind ?? 'an explicit';
         return fail('APPROVAL_REQUIRED', `tool ${name} requires ${wanted} approval`, started);
@@ -147,6 +168,10 @@ export class ToolHost {
 
     let parsed: never;
     try {
+      // The tool keeps receiving the caller's original input: rewriting it would
+      // change the contract every tool and every test relies on. Instead the resolved
+      // path is exposed on the context, so a tool that wants the safe absolute path
+      // can use it, and `fs.*` in this repository does.
       parsed = tool.inputSchema(input);
     } catch (error) {
       record('allow', 'INVALID_INPUT', false, 'INVALID_INPUT');
@@ -176,6 +201,55 @@ export class ToolHost {
   auditRecords(): AuditRecord[] {
     return this.audit.all();
   }
+}
+
+/**
+ * Whether an approval's recorded payload authorises this exact tool and target.
+ *
+ * The approval payload is whatever the caller recorded when asking — for the agent
+ * loop that is the tool's input object. We compare the tool name (when present) and
+ * the path/url the user saw. A payload we cannot interpret is treated as
+ * authorising nothing, because guessing here is what allows target substitution.
+ */
+function approvalMatchesCall(payload: unknown, toolName: string, target: string): boolean {
+  if (typeof payload !== 'object' || payload === null) return false;
+  const record = payload as Record<string, unknown>;
+
+  // Some callers record `{ tool, target }`, others record the raw input. Accept both,
+  // but require the tool to match when the payload states it.
+  if (typeof record['tool'] === 'string' && record['tool'] !== toolName) return false;
+
+  const candidateRecord =
+    typeof record['target'] === 'string'
+      ? { value: record['target'], kind: 'target' as const }
+      : typeof record['path'] === 'string'
+        ? { value: record['path'], kind: 'path' as const }
+        : typeof record['url'] === 'string'
+          ? { value: record['url'], kind: 'url' as const }
+          : null;
+
+  if (candidateRecord === null) {
+    // No target in the payload means the approval was for a call with no target
+    // (e.g. a tool that takes only text). Only allow it when this call also has no
+    // distinguishable target.
+    return target === '' || target === undefined;
+  }
+
+  // The approval records whatever the caller passed in — often a workspace-relative
+  // path, while `target` here is the resolved absolute path. Compare the tail rather
+  // than requiring identical strings: an approval for `a.md` authorises the call
+  // whose resolved target ends in `/a.md`, and nothing else.
+  const approved = normalizeForCompare(candidateRecord.value);
+  const actual = normalizeForCompare(target);
+  if (approved === actual) return true;
+  if (candidateRecord.kind !== 'path') return false;
+  return actual.endsWith(`/${approved.replace(/^\.\//, '')}`);
+}
+
+/** Path and URL comparison that ignores case and separator style on Windows paths. */
+function normalizeForCompare(value: string): string {
+  const unified = value.split(String.fromCharCode(92)).join('/').replace(/\/{2,}/g, '/');
+  return process.platform === 'win32' ? unified.toLowerCase() : unified;
 }
 
 function fail<O>(code: ToolErrorCode, message: string, started: number): ToolCallResult<O> {

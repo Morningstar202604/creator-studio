@@ -1,4 +1,5 @@
 import { lookup as dnsLookup } from 'node:dns/promises';
+import { Readable } from 'node:stream';
 import { isIP } from 'node:net';
 
 /**
@@ -55,6 +56,64 @@ type ResolvedLookup = (hostname: string) => Promise<Array<{ address: string; fam
 
 const defaultLookup: ResolvedLookup = async (hostname) => dnsLookup(hostname, { all: true, verbatim: true });
 
+/**
+ * Fetches a URL with the connection pinned to a pre-validated IP address.
+ *
+ * This is the DNS-rebinding fix. Checking a hostname and then calling `fetch(url)`
+ * resolves the name twice: an attacker's resolver can answer "public" the first
+ * time and "127.0.0.1" the second, and the socket lands somewhere the guard never
+ * saw. `node:http`/`https` accept a `lookup` hook that decides the address at
+ * connection time, so the address that was validated is the address dialled.
+ *
+ * The Host header keeps the original hostname so TLS SNI and virtual hosting still
+ * work. Redirects are not followed here — the caller re-validates each hop.
+ */
+async function fetchPinned(
+  target: URL,
+  address: string,
+  init: { signal: AbortSignal; headers: Record<string, string> },
+): Promise<Response> {
+  const transport = target.protocol === 'https:' ? await import('node:https') : await import('node:http');
+  return new Promise<Response>((resolve, reject) => {
+    const request = transport.request(
+      {
+        protocol: target.protocol,
+        hostname: target.hostname.replace(/^\[/, '').replace(/\]$/, ''),
+        port: target.port === '' ? undefined : Number(target.port),
+        path: `${target.pathname}${target.search}`,
+        method: 'GET',
+        headers: init.headers,
+        signal: init.signal,
+        // Pin the address: this callback replaces DNS for this socket.
+        lookup: (_hostname, _options, callback) => {
+          const family = isIP(address);
+          callback(null, address, family === 6 ? 6 : 4);
+        },
+        ...(target.protocol === 'https:' ? { servername: target.hostname } : {}),
+      },
+      (response) => {
+        const headers = new Headers();
+        for (const [key, value] of Object.entries(response.headers)) {
+          if (typeof value === 'string') headers.set(key, value);
+          else if (Array.isArray(value)) headers.set(key, value.join(', '));
+        }
+        const status = response.statusCode ?? 0;
+        // 3xx responses are handed back with an empty body: the caller only needs
+        // the Location header, and reading the body of a redirect is wasted work.
+        const body = status >= 300 && status < 400 ? null : response;
+        resolve(
+          new Response(body === null ? null : (Readable.toWeb(body) as ReadableStream), {
+            status,
+            headers,
+          }),
+        );
+      },
+    );
+    request.on('error', reject);
+    request.end();
+  });
+}
+
 function ipv4ToInt(address: string): number | null {
   const parts = address.split('.');
   if (parts.length !== 4) return null;
@@ -84,6 +143,21 @@ const BLOCKED_V4_RANGES: Array<[string, number]> = [
   ['240.0.0.0', 4],
 ];
 
+/**
+ * Extracts an IPv4 address embedded in an IPv6 literal, in either notation:
+ * `::ffff:7f00:1` (two hex groups) or `::ffff:127.0.0.1` (dotted).
+ */
+function embeddedIpv4(address: string): string | null {
+  const dotted = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(address);
+  if (dotted !== null) return dotted[1] as string;
+
+  const hex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(address);
+  if (hex === null) return null;
+  const high = Number.parseInt(hex[1] as string, 16);
+  const low = Number.parseInt(hex[2] as string, 16);
+  return [high >> 8, high & 0xff, low >> 8, low & 0xff].join('.');
+}
+
 /** True for addresses a public web page can never legitimately live on. */
 export function isPrivateAddress(address: string): boolean {
   const family = isIP(address);
@@ -102,10 +176,22 @@ export function isPrivateAddress(address: string): boolean {
     const lower = address.toLowerCase();
     const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(lower);
     if (mapped !== null) return isPrivateAddress(mapped[1] as string);
+
+    // `::ffff:7f00:1` is 127.0.0.1 written in hex, and URL parsing normalises
+    // `[::ffff:127.0.0.1]` into exactly that form. The dotted regex above missed it,
+    // so loopback and the cloud metadata address were treated as public. Expand any
+    // embedded IPv4 in either notation before deciding.
+    const embedded = embeddedIpv4(lower);
+    if (embedded !== null) return isPrivateAddress(embedded);
+
     if (lower === '::' || lower === '::1') return true;
     if (lower.startsWith('fc') || lower.startsWith('fd')) return true;
     if (lower.startsWith('fe8') || lower.startsWith('fe9') || lower.startsWith('fea') || lower.startsWith('feb')) return true;
     if (lower.startsWith('ff')) return true;
+    // 64:ff9b::/96 is IPv4-embedded translation (NAT64); 2002::/16 is 6to4. Both can
+    // carry a private IPv4 address to a public-looking IPv6 literal.
+    if (lower.startsWith('64:ff9b:')) return true;
+    if (lower.startsWith('2002:')) return true;
     return false;
   }
   return true;
@@ -135,9 +221,21 @@ export function assertPublicUrl(raw: string): URL {
   return url;
 }
 
-async function assertResolvable(url: URL, resolve: ResolvedLookup): Promise<void> {
+/**
+ * Resolves a host and refuses it if any address is private.
+ *
+ * Returns the first public address so the caller can pin the connection to it.
+ * Letting `fetch` re-resolve afterwards is the DNS-rebinding hole: the guard sees
+ * one answer and the socket gets another.
+ */
+async function assertResolvable(url: URL, resolve: ResolvedLookup): Promise<string | null> {
   const host = url.hostname.replace(/^\[/, '').replace(/\]$/, '');
-  if (isIP(host) !== 0) return;
+  if (isIP(host) !== 0) {
+    if (isPrivateAddress(host)) {
+      throw new FetchGuardError('BLOCKED_HOST', `private address is not allowed: ${host}`);
+    }
+    return host;
+  }
   let addresses: Array<{ address: string; family: number }>;
   try {
     addresses = await resolve(host);
@@ -150,6 +248,7 @@ async function assertResolvable(url: URL, resolve: ResolvedLookup): Promise<void
       throw new FetchGuardError('BLOCKED_HOST', `${host} resolves to a private address`);
     }
   }
+  return addresses[0]?.address ?? null;
 }
 
 function decodeEntities(text: string): string {
@@ -279,17 +378,23 @@ export async function fetchPage(rawUrl: string, options: FetchOptions = {}): Pro
 
   let response: Response | null = null;
   for (let hop = 0; hop <= maxRedirects; hop += 1) {
-    await assertResolvable(current, resolve);
+    const pinnedAddress = await assertResolvable(current, resolve);
     let hopResponse: Response;
     try {
-      hopResponse = await fetchImpl(current.toString(), {
-        redirect: 'manual',
-        signal: AbortSignal.timeout(timeoutMs),
-        headers: {
-          'user-agent': 'CreatorStudioBot/0.5 (+local research tool)',
-          accept: 'text/html,text/plain,application/json;q=0.9,*/*;q=0.1',
-        },
-      });
+      const requestHeaders = {
+        'user-agent': 'CreatorStudioBot/0.5 (+local research tool)',
+        accept: 'text/html,text/plain,application/json;q=0.9,*/*;q=0.1',
+      };
+      // With the built-in fetch, pin the socket to the validated address. A custom
+      // fetchImpl (tests) is already responsible for its own transport.
+      hopResponse =
+        pinnedAddress !== null && options.fetchImpl === undefined
+          ? await fetchPinned(current, pinnedAddress, { signal: AbortSignal.timeout(timeoutMs), headers: requestHeaders })
+          : await fetchImpl(current.toString(), {
+              redirect: 'manual',
+              signal: AbortSignal.timeout(timeoutMs),
+              headers: requestHeaders,
+            });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'network failure';
       throw new FetchGuardError('NETWORK_ERROR', message);

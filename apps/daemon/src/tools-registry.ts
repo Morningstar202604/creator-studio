@@ -10,7 +10,15 @@
 import { mkdirSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-import { ToolError, fetchPage, listDirectory, type ListEntry, type ToolDefinition, type ToolHost } from '@creator-studio/tools';
+import {
+  ToolError,
+  fetchPage,
+  listDirectory,
+  resolveInsideWorkspace,
+  type ListEntry,
+  type ToolDefinition,
+  type ToolHost,
+} from '@creator-studio/tools';
 
 export function registerFileTools(host: Pick<ToolHost, 'register'>, workspaceRoot: string): void {
   const read: ToolDefinition<{ path: string }, { content: string; bytes: number }> = {
@@ -33,7 +41,12 @@ export function registerFileTools(host: Pick<ToolHost, 'register'>, workspaceRoo
     },
     execute: async (input) => {
       const { readFileSync } = await import('node:fs');
-      const content = readFileSync(join(workspaceRoot, input.path), 'utf8');
+      // Resolve through the same guard the host used, then read the resolved path.
+      // Re-joining `workspaceRoot` with the caller's string is what let a dangling
+      // symlink point outside the workspace after the check had passed.
+      const { readFileSync: readFile } = await import('node:fs');
+      const target = resolveInsideWorkspace(input.path, { workspaceRoot });
+      const content = readFile(target, 'utf8');
       return { content, bytes: Buffer.byteLength(content) };
     },
   };
@@ -59,7 +72,7 @@ export function registerFileTools(host: Pick<ToolHost, 'register'>, workspaceRoo
     },
     execute: async (input) => {
       const { writeFileSync } = await import('node:fs');
-      const target = join(workspaceRoot, input.path);
+      const target = resolveInsideWorkspace(input.path, { workspaceRoot });
       mkdirSync(dirname(target), { recursive: true });
       writeFileSync(target, input.text, 'utf8');
       return { bytes: Buffer.byteLength(input.text), path: input.path };
@@ -84,7 +97,7 @@ export function registerFileTools(host: Pick<ToolHost, 'register'>, workspaceRoo
       return { path };
     },
     execute: async (input) => {
-      rmSync(join(workspaceRoot, input.path), { force: true });
+      rmSync(resolveInsideWorkspace(input.path, { workspaceRoot }), { force: true });
       return { deleted: input.path };
     },
   };

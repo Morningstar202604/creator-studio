@@ -120,6 +120,10 @@ async function main(): Promise<void> {
     // Opt in with --remote-embeddings when the provider serves /embeddings; the
     // default local hash embedder needs no network and never fails.
     remoteEmbeddings: args['remote-embeddings'] === 'true',
+    // The UI is served by this daemon; that origin is the only browser origin
+    // allowed to call the API. Split-frontend dev opts in via
+    // CREATOR_STUDIO_DEV_ORIGIN instead of opening every localhost port.
+    publicOrigin: `http://${host}:${port}`,
     ...(webRoot === undefined ? {} : { webRoot }),
   });
 

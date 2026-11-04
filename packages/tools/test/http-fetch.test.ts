@@ -34,6 +34,27 @@ describe('R1 private address detection', () => {
   });
 });
 
+// Regression: `[::ffff:127.0.0.1]` is normalised by URL parsing into
+// `[::ffff:7f00:1]`, which the dotted-form regex did not match, so loopback and the
+// cloud metadata address passed as public.
+describe('R1b IPv4-mapped IPv6 is not public', () => {
+  it('treats the hex form of loopback as private', () => {
+    for (const address of ['::ffff:7f00:1', '::ffff:a9fe:a9fe', '::ffff:c0a8:1', '::ffff:0a00:1']) {
+      expect(isPrivateAddress(address), address).toBe(true);
+    }
+  });
+
+  it('still treats a genuinely public mapped address as public', () => {
+    // 8.8.8.8 = 0808:0808
+    expect(isPrivateAddress('::ffff:808:808')).toBe(false);
+  });
+
+  it('refuses a URL whose host is the hex form of loopback', () => {
+    expect(() => assertPublicUrl('http://[::ffff:7f00:1]:8791/health')).toThrowError(/BLOCKED_HOST/);
+    expect(() => assertPublicUrl('http://[::ffff:a9fe:a9fe]/latest/meta-data')).toThrowError(/BLOCKED_HOST/);
+  });
+});
+
 describe('R2 URL scheme and host guards', () => {
   it('accepts a plain public https URL', () => {
     expect(assertPublicUrl('https://example.com/page').hostname).toBe('example.com');
@@ -180,6 +201,53 @@ describe('R3 fetch guards', () => {
 // public name with 198.18.x.x, and the guard refused example.com. That is correct
 // behaviour — 198.18.0.0/15 is reserved for benchmarking and must never appear as
 // a public target — so the behaviour is pinned here rather than relaxed.
+/**
+ * DNS rebinding: the guard resolves a host, then the transport resolves it again.
+ * An attacker-controlled resolver answers public first and loopback second. The fix
+ * pins the socket to the address the guard approved, so the second answer never
+ * reaches a connection.
+ *
+ * This uses the real transport (no fetchImpl) and a real loopback server, and
+ * asserts the server is never contacted.
+ */
+describe('R3b DNS rebinding cannot reach a private address', () => {
+  it('connects to the validated address, not a later answer', async () => {
+    const { createServer } = await import('node:http');
+
+    let contacted = false;
+    const server = createServer((_req, res) => {
+      contacted = true;
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      res.end('SECRET');
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as { port: number }).port;
+
+    let lookups = 0;
+    const rebinding = async () => {
+      lookups += 1;
+      return lookups <= 2
+        ? [{ address: '93.184.216.34', family: 4 }]
+        : [{ address: '127.0.0.1', family: 4 }];
+    };
+
+    try {
+      await fetchPage(`http://rebind.test:${port}/`, {
+        lookup: rebinding,
+        timeoutMs: 3000,
+        checkRobots: false,
+      });
+    } catch {
+      // The pinned public address is unreachable here; a network error is expected.
+      // What matters is the assertion below.
+    } finally {
+      server.close();
+    }
+
+    expect(contacted).toBe(false);
+  }, 10_000);
+});
+
 describe('R4 benchmark range is not a public target', () => {
   it('treats 198.18.0.0/15 as private', () => {
     for (const address of ['198.18.0.1', '198.18.0.32', '198.19.255.254']) {

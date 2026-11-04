@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID, timingSafeEqual as cryptoTimingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 
 import { TunnelRegistry, attachTunnelServer } from './tunnel.js';
@@ -9,6 +9,13 @@ export type CloudOptions = {
   store?: CloudStore;
   tunnel?: TunnelRegistry;
   now?: () => Date;
+  /**
+   * One-time enrolment secret for the very first device of a deployment. When set,
+   * `POST /v1/pair/start` accepts it instead of a device token. When unset, only an
+   * already-paired device can start a pairing — the safe default for an established
+   * deployment.
+   */
+  bootstrapToken?: string;
 };
 
 export type CloudApp = {
@@ -42,6 +49,18 @@ async function readJson(req: IncomingMessage): Promise<Json> {
   }
 }
 
+/**
+ * Constant-time comparison for a shared secret. Length differences leak through the
+ * early return, which is acceptable here: the bootstrap token is fixed-length and a
+ * length oracle on it reveals nothing useful.
+ */
+function timingSafeEqual(a: string, b: string): boolean {
+  const left = Buffer.from(a, 'utf8');
+  const right = Buffer.from(b, 'utf8');
+  if (left.length !== right.length) return false;
+  return cryptoTimingSafeEqual(left, right);
+}
+
 function bearer(req: IncomingMessage): string | null {
   const header = req.headers.authorization;
   if (typeof header !== 'string' || !header.startsWith('Bearer ')) return null;
@@ -55,6 +74,7 @@ function bearer(req: IncomingMessage): string | null {
  */
 export function createCloud(options: CloudOptions = {}): CloudApp {
   const store = options.store ?? new MemoryStore();
+  const bootstrapToken = options.bootstrapToken ?? null;
   const tunnel = options.tunnel ?? new TunnelRegistry();
   const clock = options.now ?? (() => new Date());
 
@@ -78,12 +98,44 @@ export function createCloud(options: CloudOptions = {}): CloudApp {
       });
     }
 
-    // --- device pairing (no auth: the pairing code IS the credential) ---
+    // --- device pairing ---
+    //
+    // Starting a pairing is how a *new* device joins an existing account, so it must
+    // be authorised by a credential that already belongs to that account. Accepting
+    // `userId` from the body let any anonymous caller mint a code for any user and
+    // then redeem it into a device token — full account takeover with two requests.
     if (path === '/v1/pair/start' && method === 'POST') {
-      const body = await readJson(req);
-      const userId = typeof body.userId === 'string' ? body.userId : 'cloud-user';
-      const code = await store.createPairingCode(userId, '');
-      return send(res, 201, { code: code.code, expiresAt: new Date(code.expiresAt).toISOString() });
+      // Two legitimate callers:
+      //   1. an already-paired device adding another device to its own account;
+      //   2. a bootstrap client presenting the deployment's one-time enrolment
+      //      secret (CLOUD_BOOTSTRAP_TOKEN), which is how the *first* device of a
+      //      fresh deployment gets in. Without case 2 the product cannot start; with
+      //      an unauthenticated case 1 it can be taken over, which is what this
+      //      replaced.
+      const startToken = bearer(req);
+      const startDevice = startToken === null ? null : await store.findByToken(startToken);
+      const body = await readJson(req).catch(() => ({}) as Record<string, unknown>);
+
+      let userId: string | null = null;
+      let deviceId = '';
+      if (startDevice !== null) {
+        userId = startDevice.userId;
+        deviceId = startDevice.id;
+      } else if (startToken !== null && bootstrapToken !== null && timingSafeEqual(startToken, bootstrapToken)) {
+        userId = typeof body.userId === 'string' && body.userId !== '' ? body.userId : 'cloud-user';
+      }
+
+      if (userId === null) {
+        return send(res, 401, {
+          error: {
+            code: 'UNAUTHENTICATED',
+            message: 'pairing must be started by a paired device or the deployment bootstrap token',
+          },
+        });
+      }
+
+      const code = await store.createPairingCode(userId, deviceId);
+      return send(res, 201, { code: code.code, expiresAt: new Date(code.expiresAt).toISOString(), userId });
     }
 
     if (path === '/v1/pair/complete' && method === 'POST') {

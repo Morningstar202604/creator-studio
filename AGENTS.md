@@ -1,7 +1,7 @@
 # AGENTS.md
 
 Guidance for coding agents working in this repository. Human-facing docs live in
-[`README.md`](README.md); this file is the short version an agent needs before it
+[`README.en.md`](README.en.md); this file is the short version an agent needs before it
 touches anything.
 
 ## What this is

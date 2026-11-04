@@ -1,4 +1,4 @@
-import { realpathSync } from 'node:fs';
+import { lstatSync, realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 
 export class PathEscapeError extends Error {
@@ -76,6 +76,24 @@ export function resolveInsideWorkspace(relativePath: string, options: ResolveOpt
     if (!isInside(ancestor, realRoot)) {
       throw new PathEscapeError(relativePath, 'parent traversal via realpath');
     }
+
+    // A dangling symlink looks exactly like a missing file to realpath: the link
+    // exists, its target does not, so ENOENT comes from the target. Writing through
+    // it would land outside the workspace. Check the final component with lstat,
+    // which reports the link itself rather than following it.
+    const finalComponent = basename(resolved);
+    if (finalComponent !== '' && finalComponent !== '.' && finalComponent !== '..') {
+      let linkStats: { isSymbolicLink(): boolean } | null = null;
+      try {
+        linkStats = lstatImpl(resolved);
+      } catch (lstatError) {
+        if ((lstatError as NodeJS.ErrnoException).code !== 'ENOENT') throw lstatError;
+      }
+      if (linkStats !== null && linkStats.isSymbolicLink()) {
+        throw new PathEscapeError(relativePath, 'dangling symlink at target');
+      }
+    }
+
     return resolved;
   }
 
@@ -111,11 +129,20 @@ function defaultRealpath(path: string): string {
   return realpathSync.native(path);
 }
 
+/**
+ * lstat wrapper, injectable alongside `realpath` so tests can simulate a dangling
+ * link without touching the filesystem.
+ */
+let lstatImpl: (path: string) => { isSymbolicLink(): boolean } = (path) => lstatSync(path, { throwIfNoEntry: false }) ?? ({ isSymbolicLink: () => false } as { isSymbolicLink(): boolean });
+
 export function toWorkspaceRelative(absolutePath: string, workspaceRoot: string, platform = process.platform): string {
   const root = canonical(resolve(workspaceRoot), platform);
   const target = canonical(resolve(absolutePath), platform);
   if (!isInside(target, root)) {
     throw new PathEscapeError(absolutePath, 'not inside workspace');
   }
-  return target.slice(root.length).replace(/^[\\/]+/, '');
+  // Grant scopes are written with '/', so a Windows path must not come back with
+  // backslashes: 'secret\diary.md' would fail to match 'secret/**'.
+  const relative = target.slice(root.length).replace(/^[\\/]+/, '');
+  return relative.split(String.fromCharCode(92)).join('/');
 }
