@@ -29,3 +29,10 @@ docs/screenshots-demo/
 # Python bytecode
 __pycache__/
 *.py[cod]
+
+# Signing keys must never enter the repository. The updater's private key lives in
+# .tmp/ during a build and in CI secrets; losing control of it means anyone can
+# publish an update the app will trust.
+*.key
+*.pem
+!scripts/**/*.key

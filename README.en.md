@@ -1,10 +1,18 @@
-# Creator Studio
+<p align="center">
+  <img src="docs/brand/icon.png" alt="Creator Studio" width="96" height="96">
+</p>
 
-[![CI](https://github.com/Morningstar202604/creator-studio/actions/workflows/ci.yml/badge.svg)](https://github.com/Morningstar202604/creator-studio/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Node](https://img.shields.io/badge/node-%E2%89%A522-339933.svg)](package.json)
+<h1 align="center">Creator Studio</h1>
 
-**A local-first production desk for people who ship creative work alone.**
+<p align="center"><strong>A local-first production desk for people who ship creative work alone.</strong></p>
+
+<p align="center">
+  <a href="https://github.com/Morningstar202604/creator-studio/actions/workflows/ci.yml"><img src="https://github.com/Morningstar202604/creator-studio/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT">
+  <img src="https://img.shields.io/badge/node-%E2%89%A522-339933.svg" alt="Node 22+">
+</p>
+
+---
 
 Six creative jobs — video, novels, podcasts, courses, long-form writing, shorts —
 each a project with its own pipeline, versioned artifacts and a checklist that

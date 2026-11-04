@@ -1,10 +1,18 @@
-# 稿台 Creator Studio
+<p align="center">
+  <img src="docs/brand/icon.png" alt="稿台 Creator Studio" width="96" height="96">
+</p>
 
-[![CI](https://github.com/Morningstar202604/creator-studio/actions/workflows/ci.yml/badge.svg)](https://github.com/Morningstar202604/creator-studio/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Node](https://img.shields.io/badge/node-%E2%89%A522-339933.svg)](package.json)
+<h1 align="center">稿台 Creator Studio</h1>
 
-**给一个人独立交付作品的本地优先创作台。**
+<p align="center"><strong>给一个人独立交付作品的本地优先创作台。</strong></p>
+
+<p align="center">
+  <a href="https://github.com/Morningstar202604/creator-studio/actions/workflows/ci.yml"><img src="https://github.com/Morningstar202604/creator-studio/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT">
+  <img src="https://img.shields.io/badge/node-%E2%89%A522-339933.svg" alt="Node 22+">
+</p>
+
+---
 
 视频、小说、播客、课程、长文、短视频——六种创作活，每一样都是一个项目：有既定流水线、
 带版本的产物，以及一份必须全绿才能导出的检查表。模型指向哪里由你决定，文件留在本机。

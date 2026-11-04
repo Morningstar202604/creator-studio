@@ -30,7 +30,11 @@
       "nsis"
     ],
     "icon": [
-      "icons/icon.ico"
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico",
+      "icons/icon.png"
     ],
     "resources": [
       "daemon-runtime/**/*"
@@ -50,7 +54,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEI2RUYwRjYxRkU5OEM4NTYKUldSV3lKaitZUS92dHQrNFBIQ2s5MVVqSThHUGNmM1RRQ0pCczg0VmpLMWFrSlVsZ0RpY3A2YnAK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI5QTlGRjk5QkZDQkY2QTIKUldTaTlzdS9tZitwS1J1eTl6RWs2K0xwSWpPZHdldWU3WUFPU2RDc0RIQ0diVEdFekZ2SjRCTEsK",
       "endpoints": [
         "https://gitcode.com/badhope/creator-studio/releases/latest/download/latest.json"
       ]
