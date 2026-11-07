@@ -4,7 +4,7 @@
 > reproduced with the command next to it, the claim is wrong — fix the claim or
 > fix the code, not the reader's expectations.
 
-- **Version:** 0.19.3
+- **Version:** 0.19.4
 - **Branch model:** trunk-based. `main` is the only long-lived branch and the only
   branch that receives pushes. Feature branches live for one change and are deleted
   after merge.

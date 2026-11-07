@@ -54,9 +54,13 @@ describe('R2 the endpoint can actually return JSON', () => {
     }
   });
 
-  it('includes a host that serves text/plain without a browser session', () => {
+  it('lists only hosts verified to serve the file as plain text', () => {
+    // Checked by hand on 2026-11-08: Gitee raw and GitHub raw return the JSON,
+    // GitCode raw answers "Blob Not Found" for a branch ref and only works with a
+    // commit SHA, which changes on every push — so it is not a stable endpoint.
     const endpoints = conf.plugins?.updater?.endpoints ?? [];
     expect(endpoints.some((endpoint) => endpoint.includes('gitee.com/'))).toBe(true);
+    expect(endpoints.every((endpoint) => !endpoint.includes('raw.gitcode.com'))).toBe(true);
   });
 });
 

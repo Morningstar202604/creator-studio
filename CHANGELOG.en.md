@@ -8,6 +8,33 @@ The authoritative changelog is written in Chinese in [`CHANGELOG.md`](CHANGELOG.
 this file carries the same release boundaries for English readers and will be
 kept in sync from 0.17.0 onward.
 
+## [0.19.4] - 2026-11-08
+
+This release exists so the update path added in 0.19.3 can be walked end to end
+once: an older installed copy checking, downloading, verifying the signature,
+installing and restarting into the new version. That needs two real versions, so
+the version gap is the point.
+
+### Added
+
+- The About panel's update block now covers every state in words: not checked,
+  checking, up to date, update available, download progress, installed, and
+  distinct messages for timeout, signature failure and "nothing published yet".
+
+### Fixed
+
+- The endpoint list still carried a GitCode raw URL, which answers
+  `Blob Not Found` when addressed by branch (only a commit SHA works, and that
+  changes on every push, so it cannot be a stable endpoint). Only the two hosts
+  that were actually verified remain: Gitee raw primary, GitHub raw fallback.
+
+### Verified
+
+- Starting from an installed 0.19.3 with `latest.json` pointing at 0.19.4: check →
+  download → signature verified → installed → the app reports 0.19.4. When the
+  update host is unreachable the panel gives an actionable sentence instead of a
+  raw error.
+
 ## [0.19.3] - 2026-11-08
 
 The auto-update path had never worked. The plugin was registered and signatures

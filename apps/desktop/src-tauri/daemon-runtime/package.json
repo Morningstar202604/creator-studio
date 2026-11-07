@@ -1,6 +1,6 @@
 {
   "name": "creator-studio-daemon",
-  "version": "0.19.3",
+  "version": "0.19.4",
   "type": "module",
   "dependencies": {
     "@fastify/cors": "11.3.1",
