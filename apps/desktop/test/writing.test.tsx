@@ -2,7 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../src/App';
-import { api } from '../src/api';
+import { ApiError, api } from '../src/api';
 import { countWords } from '../src/pages/DocumentPage';
 
 const PACK = {
@@ -80,6 +80,7 @@ const chapter = (id: string, title: string, number: string, body: string) => ({
   body,
   tags: [],
   order: Number.parseInt(number, 10),
+  revision: 1,
   createdAt: '2026-10-26T00:00:00.000Z',
   updatedAt: '2026-10-26T00:00:00.000Z',
 });
@@ -128,6 +129,8 @@ vi.mock('../src/api', async () => {
       updateEntity: vi.fn(async (_projectId: string, cardId: string) => ({
         card: chapter(cardId, '第一章 雾从海上来', '1', '海雾压着航道。改'),
       })),
+      cardRevisions: vi.fn(async () => ({ current: 1, revisions: [] })),
+      restoreCardRevision: vi.fn(),
       deleteEntity: vi.fn(),
       manuscript: vi.fn(),
       exportManuscript: vi.fn(async () => ({
@@ -265,5 +268,100 @@ describe('R6 creating a chapter fills the pack title field', () => {
     // `chapter.title` is required by the pack; sending only `number` returned 400.
     expect(payload.fields['title']).toBe(payload.title);
     expect(payload.fields['number']).toBeDefined();
+  });
+});
+
+describe('R7 autosave is conditional on the revision it read', () => {
+  it('sends expectedRevision so a concurrent write is detected', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    const editor = await screen.findByLabelText('第一章 雾从海上来 正文');
+    await user.click(editor);
+    await user.type(editor, '！');
+    await waitFor(() => expect(mocked.updateEntity).toHaveBeenCalled(), { timeout: 4000 });
+    const [, , patch] = mocked.updateEntity.mock.calls[0] as unknown as [string, string, { expectedRevision?: number }];
+    expect(patch.expectedRevision).toBe(1);
+  });
+
+  it('shows a merge panel instead of losing text when the daemon answers 409', async () => {
+    const user = userEvent.setup();
+    mocked.updateEntity.mockRejectedValueOnce(
+      new ApiError('CARD_STALE', 'card changed', 409, {
+        error: { code: 'CARD_STALE' },
+        card: chapter('c1', '第一章 雾从海上来', '1', '对方写的句子。'),
+      }),
+    );
+    render(<App />);
+    const editor = await screen.findByLabelText('第一章 雾从海上来 正文') as HTMLTextAreaElement;
+    await user.click(editor);
+    await user.type(editor, '我的句子。');
+    await waitFor(() => expect(screen.getByText('这一章在别处被改过了')).toBeTruthy(), { timeout: 4000 });
+    // Both sides are on screen, and the editor was not silently overwritten.
+    expect(screen.getByText('对方写的句子。')).toBeTruthy();
+    expect(editor.value).toContain('我的句子。');
+    expect(screen.getByRole('button', { name: '保留我的' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '采用对方的' })).toBeTruthy();
+  });
+
+  it('keeps both sides when the writer asks for it', async () => {
+    const user = userEvent.setup();
+    mocked.updateEntity.mockRejectedValueOnce(
+      new ApiError('CARD_STALE', 'card changed', 409, {
+        error: { code: 'CARD_STALE' },
+        card: chapter('c1', '第一章 雾从海上来', '1', '对方写的句子。'),
+      }),
+    );
+    render(<App />);
+    const editor = await screen.findByLabelText('第一章 雾从海上来 正文');
+    await user.click(editor);
+    await user.type(editor, '我的句子。');
+    await waitFor(() => expect(screen.getByText('这一章在别处被改过了')).toBeTruthy(), { timeout: 4000 });
+
+    mocked.updateEntity.mockResolvedValueOnce({
+      card: chapter('c1', '第一章 雾从海上来', '1', '合并后的正文'),
+    } as never);
+    await user.click(screen.getByRole('button', { name: '两边都留' }));
+    await waitFor(() => expect(mocked.updateEntity).toHaveBeenLastCalledWith(
+      'p1',
+      'c1',
+      expect.objectContaining({ reason: 'conflict', expectedRevision: 1 }),
+    ));
+    await waitFor(() => expect(screen.queryByText('这一章在别处被改过了')).toBeNull());
+  });
+});
+
+describe('R8 version history', () => {
+  it('lists stored revisions and restores one', async () => {
+    const user = userEvent.setup();
+    mocked.cardRevisions.mockResolvedValueOnce({
+      current: 3,
+      revisions: [
+        {
+          id: 'r2',
+          entityId: 'c1',
+          projectId: 'p1',
+          revision: 2,
+          title: '第一章 雾从海上来',
+          fields: { title: '第一章 雾从海上来', number: '1', status: '草稿' },
+          body: '第二版正文。',
+          tags: [],
+          reason: 'save' as const,
+          createdAt: '2026-10-26T00:00:00.000Z',
+        },
+      ],
+    });
+    mocked.restoreCardRevision.mockResolvedValueOnce({
+      card: chapter('c1', '第一章 雾从海上来', '1', '第二版正文。'),
+      restoredFrom: 2,
+    });
+    render(<App />);
+    await screen.findByLabelText('第一章 雾从海上来 正文');
+    await user.click(screen.getByRole('button', { name: '版本历史' }));
+    await waitFor(() => expect(screen.getByText('第 2 版')).toBeTruthy());
+    await user.click(screen.getByRole('button', { name: '恢复到这一版' }));
+    await waitFor(() => expect(mocked.restoreCardRevision).toHaveBeenCalledWith('p1', 'c1', 2));
+    await waitFor(() =>
+      expect((screen.getByLabelText('第一章 雾从海上来 正文') as HTMLTextAreaElement).value).toBe('第二版正文。'),
+    );
   });
 });

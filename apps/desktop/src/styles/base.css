@@ -636,6 +636,84 @@ a:hover {
   font-size: 13px;
 }
 
+/* A rejected concurrent write. Warning-toned rather than danger: nothing was
+   lost, and the panel exists to help the writer choose, not to alarm them. */
+.conflict-panel {
+  border-color: color-mix(in oklab, var(--warn) 60%, var(--border));
+  background: color-mix(in oklab, var(--warn) 7%, var(--surface));
+}
+
+.conflict-panel .panel-title {
+  color: color-mix(in oklab, var(--warn) 75%, var(--text));
+}
+
+.conflict-panel p.hint {
+  margin: 6px 0 10px;
+}
+
+.conflict-compare {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.conflict-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--subtle);
+  margin-bottom: 4px;
+}
+
+.conflict-text {
+  margin: 0;
+  max-height: 180px;
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--field);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.history-panel {
+  margin-bottom: 12px;
+}
+
+.history-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.history-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--field);
+  font-size: 13px;
+}
+
+.history-rev {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 900px) {
+  .conflict-compare {
+    grid-template-columns: 1fr;
+  }
+}
+
 .empty {
   padding: 40px 0;
   color: var(--subtle);
@@ -757,6 +835,31 @@ a:hover {
   border-color: var(--border-strong);
   box-shadow: var(--shadow-2);
   transform: translateY(-1px);
+}
+
+/* First-paint placeholder while the project list is in flight: a card-sized
+   block that breathes. Honors the reduced-motion system setting. */
+.project-card.skeleton {
+  min-height: 128px;
+  cursor: default;
+  animation: skeleton-breathe 1.4s ease-in-out infinite;
+}
+
+@keyframes skeleton-breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .project-card.skeleton {
+    animation: none;
+    opacity: 0.55;
+  }
 }
 
 .project-card-top {
@@ -3082,4 +3185,18 @@ a:hover {
   margin: 0;
   color: var(--fg);
   overflow-wrap: anywhere;
+}
+
+/* A render-time crash keeps the shell; the detail is for the bug report, not
+   for reading, so it is capped and scrollable. */
+.error-boundary {
+  margin: 24px auto;
+  max-width: 720px;
+}
+
+.error-detail {
+  max-height: 160px;
+  overflow: auto;
+  font-size: 12px;
+  margin: 8px 0 10px;
 }

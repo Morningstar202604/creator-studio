@@ -6,7 +6,29 @@ use tauri::Manager;
 
 struct DaemonProcess(Mutex<Option<Child>>);
 
+/// The Node runtime staged into the bundle by `scripts/install-daemon-deps.mjs`.
+/// The installed app must start on a machine that has nothing but this
+/// installer — requiring `node` on the user's PATH made that false.
+fn bundled_node() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let base = exe.parent()?.to_path_buf();
+    let candidate = if cfg!(windows) {
+        base.join("daemon-runtime").join("node.exe")
+    } else {
+        base.join("daemon-runtime").join("node")
+    };
+    if candidate.exists() {
+        Some(candidate)
+    } else {
+        None
+    }
+}
+
 fn daemon_binary() -> PathBuf {
+    if let Some(bundled) = bundled_node() {
+        return bundled;
+    }
+    // Dev checkout: the runtime is not staged, so fall back to PATH.
     if cfg!(windows) {
         PathBuf::from("node.exe")
     } else {
@@ -68,7 +90,8 @@ fn spawn_daemon() -> std::io::Result<Child> {
 
     let working_dir = script.parent().map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
 
-    Command::new(daemon_binary())
+    let mut command = Command::new(daemon_binary());
+    command
         .arg(&script)
         .arg("--dataDir")
         .arg(dir.to_string_lossy().to_string())
@@ -76,8 +99,17 @@ fn spawn_daemon() -> std::io::Result<Child> {
         .arg("7878")
         .current_dir(working_dir)
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
+        .stderr(Stdio::null());
+    // This process is a GUI app, but node is console-subsystem: without
+    // CREATE_NO_WINDOW the child allocates its own black console window and
+    // drops it on top of the user's interface.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    command.spawn()
 }
 
 #[tauri::command]

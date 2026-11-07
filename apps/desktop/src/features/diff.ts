@@ -106,6 +106,10 @@ function lcsTable(a: string[], b: string[]): number[][] {
 function groupHunks(lines: DiffLine[]): DiffHunk[] {
   const hunks: DiffHunk[] = [];
   let current: DiffHunk | null = null;
+  // How many old-text lines have been consumed so far. An insertion has no
+  // `oldIndex` of its own, so its position can only come from this cursor —
+  // reading `oldIndex ?? 0` put every appended line at the start of the file.
+  let oldCursor = 0;
 
   for (const line of lines) {
     if (line.op === 'equal') {
@@ -113,13 +117,14 @@ function groupHunks(lines: DiffLine[]): DiffHunk[] {
         hunks.push(current);
         current = null;
       }
+      oldCursor = (line.oldIndex ?? oldCursor) + 1;
       continue;
     }
     if (current === null) {
       current = {
         id: `hunk-${hunks.length}`,
-        startOld: line.oldIndex ?? 0,
-        endOld: line.oldIndex ?? 0,
+        startOld: oldCursor,
+        endOld: oldCursor,
         startNew: line.newIndex ?? 0,
         endNew: line.newIndex ?? 0,
         removed: [],
@@ -128,7 +133,8 @@ function groupHunks(lines: DiffLine[]): DiffHunk[] {
     }
     if (line.op === 'delete') {
       current.removed.push(line.text);
-      current.endOld = (line.oldIndex ?? 0) + 1;
+      oldCursor = (line.oldIndex ?? oldCursor) + 1;
+      current.endOld = oldCursor;
     } else {
       current.added.push(line.text);
       current.endNew = (line.newIndex ?? 0) + 1;

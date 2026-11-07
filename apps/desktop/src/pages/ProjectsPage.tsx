@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type React from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useDaemon } from '../app/DaemonProvider';
 import { ApiError, api, apiExtra, type Platform, type Project, type ScenarioPack } from '../api';
 import { AppShell, EmptyState, PageHead } from '../components/AppShell';
 import { PLATFORM_LABELS, relativeTime } from '../lib/format';
@@ -28,23 +29,48 @@ export function ProjectsPage(): React.ReactElement {
   const [scenarios, setScenarios] = useState<ScenarioPack[]>([]);
   const [scenarioId, setScenarioId] = useState('video');
   const navigate = useNavigate();
+  const { connection } = useDaemon();
+  const requestSeq = useRef(0);
+  const needsReload = useRef(false);
 
   const load = useCallback(async () => {
+    // A recovery reload can overlap the in-flight first request. Only the newest
+    // result may write state, otherwise a late rejection restores an error that
+    // the successful retry already cleared.
+    const seq = ++requestSeq.current;
     setLoading(true);
     try {
       const result = await api.listProjects();
+      if (seq !== requestSeq.current) return;
       setProjects(result.projects);
       setError(null);
     } catch (cause) {
+      if (seq !== requestSeq.current) return;
       setError(cause instanceof ApiError || cause instanceof Error ? cause.message : String(cause));
     } finally {
-      setLoading(false);
+      if (seq === requestSeq.current) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  // The packaged app starts the daemon as a child process, so the first paint can
+  // beat its listen(): the landing page's first request fails with "Failed to
+  // fetch". DaemonProvider keeps polling and reaches `online` shortly after, but
+  // a page that loaded only once would show that stale red banner forever. Reload
+  // on that recovery — and only then, so a healthy start makes one request.
+  useEffect(() => {
+    if (connection === 'offline') {
+      needsReload.current = true;
+      return;
+    }
+    if (connection === 'online' && needsReload.current) {
+      needsReload.current = false;
+      void load();
+    }
+  }, [connection, load]);
 
   // Scenario packs drive the create form and the per-card stage labels.
   useEffect(() => {
@@ -221,7 +247,15 @@ export function ProjectsPage(): React.ReactElement {
         </div>
       </div>
 
-      {visible.length === 0 && !loading ? (
+      {loading && visible.length === 0 ? (
+        // First paint before the daemon answers: three breathing placeholders so
+        // the landing page never flashes an empty state that isn't real.
+        <div className="project-grid" aria-hidden="true">
+          {[0, 1, 2].map((index) => (
+            <div key={index} className="project-card skeleton" />
+          ))}
+        </div>
+      ) : visible.length === 0 && !loading ? (
         <EmptyState
           title={projects.length === 0 ? '还没有项目' : '没有匹配的项目'}
           hint={

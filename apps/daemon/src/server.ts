@@ -6,6 +6,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
 import type { Database } from 'better-sqlite3';
+import { registerMcpEndpoint } from './mcp.js';
 import type { Artifact, Run, ToolGrant } from '@creator-studio/protocol';
 import {
   AgentIdSchema,
@@ -416,6 +417,7 @@ function isAutomationKind(value: string): value is 'topic-card' | 'research-note
     'exportPolicy',
     'scenarios',
     'entities',
+    'revisions',
   ] as const;
   const startedAt = Date.now();
 
@@ -1665,13 +1667,14 @@ function isAutomationKind(value: string): value is 'topic-card' | 'research-note
     if (pack === null) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: id } });
     const existing = scenarioStore.getCard(id, cardId);
     if (existing === null) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: cardId } });
+    const rawBody = request.body as Record<string, unknown>;
     const merged = {
       type: existing.type,
       title: existing.title,
       fields: existing.fields,
       body: existing.body,
       tags: existing.tags,
-      ...(request.body as Record<string, unknown>),
+      ...rawBody,
     };
     const parsed = EntityCardInputSchema.safeParse(merged);
     if (!parsed.success) {
@@ -1684,14 +1687,79 @@ function isAutomationKind(value: string): value is 'topic-card' | 'research-note
     if (!check.ok) return reply.code(400).send({ error: { code: 'INVALID_CARD', message: check.message } });
     // Drag-and-drop moves a card within its column, which is the card's own
     // position — not a field value — so it rides alongside the parsed payload.
-    const rawOrder = (request.body as Record<string, unknown>).order;
+    const rawOrder = rawBody.order;
     const order =
       typeof rawOrder === 'number' && Number.isInteger(rawOrder) && rawOrder >= 0 ? rawOrder : undefined;
-    const card = scenarioStore.updateCard(id, cardId, {
+    // Conditional write: a client editing prose sends the revision it read. When the
+    // row has moved on the daemon refuses instead of overwriting, and hands back the
+    // current card so the UI can offer a merge rather than an error it cannot act on.
+    // Conditional write is mandatory for content edits: a client that omits the
+    // revision would be back to overwriting whatever landed in between, which is
+    // exactly the bug this replaced. `force: true` is the explicit escape hatch for
+    // repairs and migrations that genuinely mean "whatever is there now".
+    const rawRevision = rawBody.expectedRevision;
+    const expectedRevision =
+      typeof rawRevision === 'number' && Number.isInteger(rawRevision) && rawRevision > 0 ? rawRevision : undefined;
+    const force = rawBody.force === true;
+    if (expectedRevision === undefined && !force) {
+      return reply.code(428).send({
+        error: {
+          code: 'EXPECTED_REVISION_REQUIRED',
+          message: 'send expectedRevision (the revision you read); omitting it would allow silent overwrite',
+        },
+        card: existing,
+      });
+    }
+    const rawReason = rawBody.reason;
+    const reason = rawReason === 'save' || rawReason === 'restore' || rawReason === 'conflict' ? rawReason : undefined;
+    const result = scenarioStore.updateCard(id, cardId, {
       ...parsed.data,
       ...(order === undefined ? {} : { order }),
+      ...(expectedRevision === undefined ? {} : { expectedRevision }),
+      ...(reason === undefined ? {} : { reason }),
     });
-    return card === null ? reply.code(404).send({ error: { code: 'NOT_FOUND', message: cardId } }) : { card };
+    if (!result.ok) {
+      if (result.reason === 'not-found') {
+        return reply.code(404).send({ error: { code: 'NOT_FOUND', message: cardId } });
+      }
+      return reply.code(409).send({
+        error: {
+          code: 'CARD_STALE',
+          message: `card changed since revision ${expectedRevision ?? '?'}; current is ${result.current.revision}`,
+        },
+        card: result.current,
+      });
+    }
+    return { card: result.card };
+  });
+
+  /** Past states of one card, newest first. Powers the desk's history drawer. */
+  app.get('/v1/projects/:id/entities/:cardId/revisions', async (request, reply) => {
+    const { id, cardId } = request.params as { id: string; cardId: string };
+    if (projectStore.get(id) === null) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: id } });
+    const card = scenarioStore.getCard(id, cardId);
+    if (card === null) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: cardId } });
+    return { current: card.revision, revisions: scenarioStore.listRevisions(id, cardId) };
+  });
+
+  /** Puts a card back to a stored revision; the restore is itself a new revision. */
+  app.post('/v1/projects/:id/entities/:cardId/revisions/:revision/restore', async (request, reply) => {
+    const { id, cardId, revision } = request.params as { id: string; cardId: string; revision: string };
+    if (projectStore.get(id) === null) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: id } });
+    const target = Number.parseInt(revision, 10);
+    if (!Number.isInteger(target) || target < 1) {
+      return reply.code(400).send({ error: { code: 'INVALID_REVISION', message: revision } });
+    }
+    const result = scenarioStore.restoreRevision(id, cardId, target);
+    if (!result.ok) {
+      return result.reason === 'not-found'
+        ? reply.code(404).send({ error: { code: 'NOT_FOUND', message: `revision ${target}` } })
+        : reply.code(409).send({
+            error: { code: 'CARD_STALE', message: 'card changed during restore' },
+            card: result.current,
+          });
+    }
+    return { card: result.card, restoredFrom: target };
   });
 
   /** Whole-project card graph, for the relation view. */
@@ -2766,6 +2834,13 @@ ${body.text}`,
     }, 30_000);
     if (typeof timer.unref === 'function') timer.unref();
   }
+
+  // -------------------------------------------------------- MCP endpoint
+
+  // The standard surface external agents (Claude Desktop, Cursor, …) connect
+  // to. Mounted before the static/404 fallback so the web handler never sees
+  // /mcp.
+  registerMcpEndpoint(app);
 
   // ------------------------------------------------------------ static web
 

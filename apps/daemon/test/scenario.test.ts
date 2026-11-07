@@ -227,7 +227,10 @@ describe('R5 entity cards', () => {
 
     const updated = await api(`/v1/projects/${pid}/entities/${cardId}`, {
       method: 'PATCH',
-      body: JSON.stringify({ fields: { name: '七号泊位', region: '北港', atmosphere: '锈味很重' } }),
+      body: JSON.stringify({
+        fields: { name: '七号泊位', region: '北港', atmosphere: '锈味很重' },
+        expectedRevision: created.body.card.revision,
+      }),
     });
     expect(updated.status).toBe(200);
     expect(updated.body.card.fields.atmosphere).toBe('锈味很重');
@@ -236,6 +239,130 @@ describe('R5 entity cards', () => {
     expect((await api(`/v1/projects/other/entities/${cardId}`, { method: 'DELETE' })).status).toBe(404);
     expect((await api(`/v1/projects/${pid}/entities/${cardId}`, { method: 'DELETE' })).status).toBe(200);
     expect((await api(`/v1/projects/${pid}/entities/${cardId}`, { method: 'DELETE' })).status).toBe(404);
+  });
+});
+
+describe('R6 concurrent card writes cannot silently lose text', () => {
+  const makeProject = async (): Promise<string> => {
+    const project = await api('/v1/projects', { method: 'POST', body: JSON.stringify({ title: '并发', scenarioId: 'novel' }) });
+    return project.body.project.id as string;
+  };
+
+  it('rejects a write whose expectedRevision is stale and returns the current card', async () => {
+    const pid = await makeProject();
+    const created = await api(`/v1/projects/${pid}/entities`, {
+      method: 'POST',
+      body: JSON.stringify({ type: 'chapter', title: '第一章', fields: { title: '第一章', number: '1' }, body: '' }),
+    });
+    const cardId = created.body.card.id as string;
+    const read = await api(`/v1/projects/${pid}/entities`);
+    const seenRevision = read.body.cards.find((card: { id: string }) => card.id === cardId).revision as number;
+
+    const first = await api(`/v1/projects/${pid}/entities/${cardId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ body: '甲写了这句', expectedRevision: seenRevision }),
+    });
+    expect(first.status).toBe(200);
+    expect(first.body.card.revision).toBe(seenRevision + 1);
+
+    // Second client still believes it is on the revision it read.
+    const second = await api(`/v1/projects/${pid}/entities/${cardId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ body: '乙写了这句', expectedRevision: seenRevision }),
+    });
+    expect(second.status).toBe(409);
+    expect(second.body.error.code).toBe('CARD_STALE');
+    // The response carries the winner's text so the UI can merge instead of guess.
+    expect(second.body.card.body).toBe('甲写了这句');
+    expect(second.body.card.revision).toBe(seenRevision + 1);
+
+    // Nothing was overwritten by the rejected write.
+    const after = await api(`/v1/projects/${pid}/entities`);
+    const stored = after.body.cards.find((card: { id: string }) => card.id === cardId);
+    expect(stored.body).toBe('甲写了这句');
+  });
+
+  it('refuses an unconditional write so text cannot be silently replaced', async () => {
+    const pid = await makeProject();
+    const created = await api(`/v1/projects/${pid}/entities`, {
+      method: 'POST',
+      body: JSON.stringify({ type: 'chapter', title: '第二章', fields: { title: '第二章', number: '2' } }),
+    });
+    const cardId = created.body.card.id as string;
+    // No expectedRevision: the old behaviour would overwrite whatever was there.
+    const blind = await api(`/v1/projects/${pid}/entities/${cardId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ order: 7 }),
+    });
+    expect(blind.status).toBe(428);
+    expect(blind.body.error.code).toBe('EXPECTED_REVISION_REQUIRED');
+    expect(blind.body.card.revision).toBe(1);
+
+    // A caller that really means "whatever is stored now" says so explicitly.
+    const forced = await api(`/v1/projects/${pid}/entities/${cardId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ order: 7, force: true }),
+    });
+    expect(forced.status).toBe(200);
+    expect(forced.body.card.order).toBe(7);
+  });
+
+  it('accepts a reorder that carries the revision it read', async () => {
+    const pid = await makeProject();
+    const created = await api(`/v1/projects/${pid}/entities`, {
+      method: 'POST',
+      body: JSON.stringify({ type: 'chapter', title: '第二章', fields: { title: '第二章', number: '2' } }),
+    });
+    const moved = await api(`/v1/projects/${pid}/entities/${created.body.card.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ order: 3, expectedRevision: created.body.card.revision }),
+    });
+    expect(moved.status).toBe(200);
+    expect(moved.body.card.order).toBe(3);
+  });
+
+  it('lists history and restores an earlier revision', async () => {
+    const pid = await makeProject();
+    const created = await api(`/v1/projects/${pid}/entities`, {
+      method: 'POST',
+      body: JSON.stringify({ type: 'chapter', title: '第三章', fields: { title: '第三章', number: '3' }, body: '初稿' }),
+    });
+    const cardId = created.body.card.id as string;
+    const baseRevision = created.body.card.revision as number;
+    await api(`/v1/projects/${pid}/entities/${cardId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ body: '改坏了', expectedRevision: baseRevision }),
+    });
+
+    const history = await api(`/v1/projects/${pid}/entities/${cardId}/revisions`);
+    expect(history.status).toBe(200);
+    expect(history.body.revisions).toHaveLength(1);
+    expect(history.body.revisions[0].body).toBe('初稿');
+
+    const restored = await api(`/v1/projects/${pid}/entities/${cardId}/revisions/${baseRevision}/restore`, {
+      method: 'POST',
+    });
+    expect(restored.status).toBe(200);
+    expect(restored.body.card.body).toBe('初稿');
+    expect(restored.body.restoredFrom).toBe(baseRevision);
+
+    // Restoring is itself a version, so the damaged text is still recoverable.
+    const after = await api(`/v1/projects/${pid}/entities/${cardId}/revisions`);
+    expect(after.body.revisions[0].reason).toBe('restore');
+    expect(after.body.revisions[0].body).toBe('改坏了');
+  });
+
+  it('404s history for an unknown card and rejects a non-numeric revision', async () => {
+    const pid = await makeProject();
+    expect((await api(`/v1/projects/${pid}/entities/nope/revisions`)).status).toBe(404);
+    const created = await api(`/v1/projects/${pid}/entities`, {
+      method: 'POST',
+      body: JSON.stringify({ type: 'chapter', title: '第四章', fields: { title: '第四章', number: '4' } }),
+    });
+    const cardId = created.body.card.id as string;
+    const bad = await api(`/v1/projects/${pid}/entities/${cardId}/revisions/abc/restore`, { method: 'POST' });
+    expect(bad.status).toBe(400);
+    expect(bad.body.error.code).toBe('INVALID_REVISION');
   });
 });
 

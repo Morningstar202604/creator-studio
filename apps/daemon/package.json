@@ -1,6 +1,6 @@
 {
   "name": "@creator-studio/daemon",
-  "version": "0.18.1",
+  "version": "0.19.1",
   "private": true,
   "type": "module",
   "main": "./dist/main.js",
@@ -18,9 +18,11 @@
     "@creator-studio/tools": "workspace:*",
     "@fastify/cors": "11.3.1",
     "@fastify/static": "10.1.7",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "better-sqlite3": "13.0.3",
     "docx": "9.14.0",
-    "fastify": "5.12.7"
+    "fastify": "5.12.7",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/better-sqlite3": "9.6.0",

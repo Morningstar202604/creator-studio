@@ -8,7 +8,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Windows-x64-0078D4?style=flat-square" alt="Windows">
-  <img src="https://img.shields.io/badge/tests-674%20passing%20%C2%B7%200%20skipped-brightgreen?style=flat-square" alt="tests">
+  <img src="https://img.shields.io/badge/tests-711%20passing%20%C2%B7%200%20skipped-brightgreen?style=flat-square" alt="tests">
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT">
 </p>
 
@@ -18,11 +18,13 @@
   <a href="README.en.md">English</a>
 </p>
 
-![工作台](docs/screenshots/02-workspace-light.png)
+<p align="center">
+  <img src="docs/media/demo.gif" alt="稿台演示动图" width="720">
+</p>
 
 ## 安装
 
-从 [Releases](https://github.com/Morningstar202604/creator-studio/releases/latest) 下载 `CreatorStudio_0.18.0_x64-setup.exe` 直接运行。需要系统里有 Node.js 22 或更高版本。
+从 [Releases](https://github.com/Morningstar202604/creator-studio/releases/latest) 下载 `CreatorStudio_0.19.1_x64-setup.exe` 直接运行。安装包自带运行时，机器上不需要另装 Node。
 
 或者从源码跑：
 
@@ -47,6 +49,8 @@ pnpm --filter @creator-studio/daemon start -- --port 7878
 | **文案** | 简报 → 素材 → 初稿 → 多平台 → 配图 → 发布 |
 | **短视频** | 钩子 → 口播稿 → 镜头 → 字幕 → 发布 |
 
+![工作台](docs/screenshots/02-workspace-light.png)
+
 小说流水线的实际样子——章节、角色、伏笔，以及一条能看出哪些线还没收回的时间轴：
 
 | 写作台 | 叙事时间轴 |
@@ -57,16 +61,41 @@ pnpm --filter @creator-studio/daemon start -- --port 7878
 |---|---|
 | ![卡片](docs/screenshots/04-research-light.png) | ![复盘](docs/screenshots/09-review-light.png) |
 
+写作台的每一章就是卡片本身，看板、关系图和导出的书读的是同一份内容，不会各说各话。
+两个人（或两个窗口）同时改同一章，后保存的那次不会覆盖前一次，而是给你一个合并面板：
+
+| 并发修改合并 | 章节版本历史 |
+|---|---|
+| ![合并](docs/screenshots/73-conflict-merge.png) | ![历史](docs/screenshots/74-version-history.png) |
+
 每一步都会在项目目录里写一个带版本的文件。除非你把模型指向远程端点，否则内容不出本机。
+
+## 接入 Agent（MCP）
+
+daemon 内置 Model Context Protocol 服务端，Claude Desktop、Claude Code、Cursor 或任何 MCP 客户端都能直接驱动稿台：
+
+```json
+{
+  "mcpServers": {
+    "creator-studio": {
+      "url": "http://127.0.0.1:7878/mcp"
+    }
+  }
+}
+```
+
+十个工具覆盖全部常用操作——列出/新建项目、读产物、跑一个流水线阶段、让 Agent 干活、导出发布包、检索记忆。每次调用走的都是应用自己那套校验、审批门禁与审计；破坏性操作不暴露给 MCP。
 
 ## 为什么产出能用
 
 模型输出先过 schema 才落盘。如果模型把 `"score": "88"` 写成字符串，会被矫正；如果返回的是散文而不是 JSON，会带一个示例重试一次；还是不行就报错并说清哪一项不合格——不会写一个半成品文件。
 
-另外两件日常会用到的：
+另外几件日常会用到的：
 
 - **破坏性操作先问。** 删文件、写项目外、执行命令都会停下来等你批准。一次批准只覆盖一次操作。
 - **崩了能接上。** 每一步都落盘。应用中途挂掉，那次运行会被标为中断，之后从断点继续。
+- **不会静默覆盖。** 每次保存都带着读到的版本号。这一章在别处被改过，你会拿到合并面板；每章最近 20 个版本都能恢复，连「恢复」本身替换掉的那一版也留着。
+- **一页崩了只坏一页。** 渲染出错时左边导航还在，可以重试，其他页面照常用。
 
 ## 命令行
 
@@ -82,9 +111,9 @@ cs publish <projectId>
 ## 截图
 
 <details>
-<summary>全部 76 张</summary>
+<summary>全部 79 张</summary>
 
-[`docs/screenshots/`](docs/screenshots/) 里 76 张，明暗两套，1440 / 1100 / 900 三档宽度。
+[`docs/screenshots/`](docs/screenshots/) 里 79 张，明暗两套，1440 / 1100 / 900 三档宽度。
 
 演示录屏：[`docs/media/demo.mp4`](docs/media/demo.mp4)。
 
@@ -92,7 +121,7 @@ cs publish <projectId>
 
 ## 状态
 
-674 项测试，0 跳过。其中包含九个对真实 Postgres 集群跑的租户隔离测试、27 个页面的真浏览器巡检（0 控制台错误、0 布局溢出），以及一次对本地模型桩的完整流水线跑通。
+711 项测试，0 跳过。其中包含九个对真实 Postgres 集群跑的租户隔离测试、27 个页面的真浏览器巡检（0 控制台错误、0 布局溢出），以及一次对本地模型桩的完整流水线跑通。
 
 | 已经能用 | 还没做 |
 |---|---|

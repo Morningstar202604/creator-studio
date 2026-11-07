@@ -77,6 +77,10 @@ jobs:
 
   desktop:
     name: desktop bundle (${{ matrix.os }})
+    # Installers are release artifacts, not per-commit checks: building three
+    # Tauri/Rust bundles on every push costs ~30 min of runners for output
+    # nobody downloads between releases. Tag pushes still get all three.
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ${{ matrix.os }}
     needs: verify
     strategy:

@@ -98,9 +98,13 @@ const novelCards = [
 ];
 
 const cardId = {};
+const cardRevision = {};
 for (const card of novelCards) {
   const result = await j('POST', `/v1/projects/${novel.id}/entities`, card);
-  if (result.status === 201) cardId[card.title] = result.data.card.id;
+  if (result.status === 201) {
+    cardId[card.title] = result.data.card.id;
+    cardRevision[card.title] = result.data.card.revision;
+  }
 }
 
 const link = (from, to, relationType) =>
@@ -122,13 +126,23 @@ await link('账本上的陌生名字', '第三章 旧账本', 'plants');
 await link('第一章 雾从海上来', '雾港码头', 'located-in');
 await link('第二章 灯塔不亮', '旧灯塔', 'located-in');
 
-await j('PATCH', `/v1/projects/${novel.id}/entities/${cardId['第一章 雾从海上来']}`, {
+// Card writes carry the revision the seed run read at creation time (0.19 API
+// contract): a save without it is rejected rather than silently overwriting a
+// concurrent edit.
+const patchCard = async (title, fields) => {
+  await j('PATCH', `/v1/projects/${novel.id}/entities/${cardId[title]}`, {
+    ...fields,
+    expectedRevision: cardRevision[title],
+  });
+};
+
+await patchCard('第一章 雾从海上来', {
   body: '雾从海上来的时候，林砚正站在码头上。\n\n他回来了，带着一只空箱子。',
 });
-await j('PATCH', `/v1/projects/${novel.id}/entities/${cardId['第二章 灯塔不亮']}`, {
+await patchCard('第二章 灯塔不亮', {
   body: '灯塔灭了三夜，周望没跟任何人提。\n\n第四夜，他提着灯油上了塔。',
 });
-await j('PATCH', `/v1/projects/${novel.id}/entities/${cardId['第三章 旧账本']}`, {
+await patchCard('第三章 旧账本', {
   body: '账本摊在桌上，第三页多了一个名字。',
 });
 

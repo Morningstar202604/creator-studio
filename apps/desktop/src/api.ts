@@ -197,6 +197,8 @@ export type EntityCard = {
   body: string;
   tags: string[];
   order: number;
+  /** Row version; echo it back on write so a concurrent edit is detected. */
+  revision: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -210,6 +212,19 @@ export type EntityRelation = {
   createdAt: string;
 };
 
+/** One stored past state of a card. `revision` is the version it represents. */
+export type EntityRevision = {
+  id: string;
+  entityId: string;
+  projectId: string;
+  revision: number;
+  title: string;
+  fields: Record<string, string>;
+  body: string;
+  tags: string[];
+  reason: 'save' | 'restore' | 'conflict';
+  createdAt: string;
+};
 export type CardLink = {
   relation: EntityRelation;
   card: EntityCard;
@@ -301,12 +316,19 @@ const BASE = resolveBase();
 export class ApiError extends Error {
   readonly code: string;
   readonly status: number;
+  /**
+   * Parsed response body for the failure. A 409 CARD_STALE carries the winning
+   * card under `card`, which is what lets the desk show a merge instead of a
+   * dead-end error. Undefined for transport failures.
+   */
+  readonly body: unknown;
 
-  constructor(code: string, message: string, status: number) {
+  constructor(code: string, message: string, status: number, body?: unknown) {
     super(message);
     this.name = 'ApiError';
     this.code = code;
     this.status = status;
+    this.body = body;
   }
 }
 
@@ -343,6 +365,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       parsed?.error?.code ?? 'HTTP_ERROR',
       parsed?.error?.message ?? `请求失败 ${response.status}`,
       response.status,
+      body,
     );
   }
   return body as T;
@@ -406,9 +429,31 @@ export const api = {
   updateEntity: (
     projectId: string,
     cardId: string,
-    input: { title?: string; fields?: Record<string, string>; body?: string; tags?: string[]; order?: number },
+    input: {
+      title?: string;
+      fields?: Record<string, string>;
+      body?: string;
+      tags?: string[];
+      order?: number;
+      /** Reject the write with 409 CARD_STALE if the row has moved past this revision. */
+      expectedRevision?: number;
+      reason?: 'save' | 'restore' | 'conflict';
+    },
   ): Promise<{ card: EntityCard }> =>
     request(`/v1/projects/${projectId}/entities/${cardId}`, { method: 'PATCH', body: JSON.stringify(input) }),
+
+  cardRevisions: (
+    projectId: string,
+    cardId: string,
+  ): Promise<{ current: number; revisions: EntityRevision[] }> =>
+    request(`/v1/projects/${projectId}/entities/${cardId}/revisions`),
+
+  restoreCardRevision: (
+    projectId: string,
+    cardId: string,
+    revision: number,
+  ): Promise<{ card: EntityCard; restoredFrom: number }> =>
+    request(`/v1/projects/${projectId}/entities/${cardId}/revisions/${revision}/restore`, { method: 'POST' }),
 
   deleteEntity: (projectId: string, cardId: string): Promise<{ deleted: string }> =>
     request(`/v1/projects/${projectId}/entities/${cardId}`, { method: 'DELETE' }),

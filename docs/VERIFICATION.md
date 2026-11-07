@@ -50,6 +50,86 @@ POST /v1/projects/:id/review           201  review-report, stage → review
 
 Seven artifacts total, stage advanced to `review`, token accounting at 2280.
 
+## Concurrent-write protection — 2026-11-07
+
+Two clients read the same chapter at revision N, then both save. The scenario is
+reproduced by `node scripts/probe`-style scripted clients in
+`apps/daemon/test/scenario.test.ts` R6; the browser path is exercised by
+`scripts/shoot-collaboration.py`, which drives Chromium while a second client
+writes through the HTTP API.
+
+| Case | Expected | Observed |
+|---|---|---|
+| Two clients read rev 1, both PATCH with `expectedRevision: 1` | first 200, second 409 `CARD_STALE` | 200 then 409, winner's text intact |
+| 409 response body | carries the current card | `card.revision = 2`, text = winner's |
+| Retry with the revision from the 409 | 200, both texts preserved when merged | 200, both paragraphs present once |
+| PATCH without `expectedRevision` | 428, nothing written | 428 `EXPECTED_REVISION_REQUIRED`, row unchanged |
+| PATCH with `force: true` | 200 (explicit overwrite) | 200 |
+| `GET .../revisions` after two writes | one stored version, newest first | one version, `reason: save` |
+| Restore revision 1 | 200, `restoredFrom: 1`, new revision number | 200, body reverted, revision 3 |
+| History after a restore | newest row is the replaced text, `reason: restore` | as expected |
+
+Three-way merge (`apps/desktop/test/merge.test.ts`): disjoint edits apply once,
+overlapping edits produce a marked conflict block, a missing base degrades to
+keeping both.
+
+## MCP endpoint — 2026-11-07
+
+The daemon serves `POST /mcp` (Streamable HTTP, stateless) via the official
+`@modelcontextprotocol/sdk`. Two layers of evidence:
+
+- `apps/daemon/test/mcp.test.ts` (5 cases): initialize handshake reports
+  `creator-studio` at protocol 2025-06-18; `tools/list` returns the ten-tool
+  surface; `tools/call create_project` and `list_projects` round-trip real data
+  through the production API path; a nonexistent artifact id comes back as a
+  tool error carrying the API's 404 message instead of crashing the endpoint;
+  `GET /mcp` is 405 with `allow: POST` (stateless servers offer no SSE stream).
+- An external client check using the SDK's `Client` +
+  `StreamableHTTPClientTransport` against a running daemon: connected, listed
+  10 tools, created a project, listed projects (including the new one), and
+  listed the six scenarios. Script kept at `.tmp/mcp-client-check.mjs`
+  (untracked) so the run is repeatable.
+
+Deliberate scope: no `resources`/`prompts` yet, and no destructive tool (delete,
+grants, key management) on the MCP surface — those stay UI/CLI-only behind
+approval gates.
+
+## Packaged desktop smoke — 2026-11-07
+
+`pnpm tauri build --bundles nsis` produced `CreatorStudio_0.19.0_x64-setup.exe`
+(36.15 MiB). The staging script (`node scripts/install-daemon-deps.mjs`) now
+copies the build machine's Node binary into `daemon-runtime/`, so the installer
+carries its own runtime; `lib.rs` prefers that binary and falls back to PATH
+only in a dev checkout. The local build is not signed — the updater private key
+exists only as a CI secret — so the `.sig` step fails locally; release artifacts
+are produced and signed by the `desktop bundle` CI job.
+
+The daemon behind the packaged shell is API-only: in this mode the UI is served
+by the Tauri webview, so `GET http://127.0.0.1:7878/` returning Fastify's 404 is
+by design and says nothing about the installer. Check the window, not the port.
+
+| Check | Observation |
+|---|---|
+| Bundled daemon | `GET /health` → `appVersion 0.19.0`, capabilities include `revisions`, pid is the spawned child |
+| Bundled runtime | child command line is `<install>\daemon-runtime\node.exe … daemon-runtime\dist\main.js`, no PATH lookup |
+| CORS from the Tauri origin | `GET /v1/projects` with `Origin: http://tauri.localhost` → 200 with `access-control-allow-origin` |
+| UI | the 稿台 window renders nav, project page and empty state |
+| Console window | none — the child starts with `CREATE_NO_WINDOW` |
+| Startup race (forced) | a test-only launcher held the daemon back 20s; the landing page showed the red `无法连接本地 daemon` banner, which then cleared on its own once the daemon came online, with no user action |
+
+The forced race reproduced a real defect found on this date: the landing page
+fetched once on mount, so a daemon that was slow to `listen()` left the red
+banner up forever even after `DaemonProvider` reported `online`. `ProjectsPage`
+now reloads on an offline→online recovery, with a request sequence number so a
+late failure cannot overwrite the successful retry. Three cases in
+`apps/desktop/test/startup-race.test.tsx` (recovery, healthy start, real
+outage) fail without the fix — removing the recovery effect turns the first one
+red — and `apps/desktop/test/packaged-shell.test.ts` pins the bundled-runtime
+and no-console-window properties of the shell itself. The layout/screenshot and
+click-sweep harnesses were run earlier the same day against the web build; these
+fixes change no markup or styling, so those screenshots still describe the
+shipped UI.
+
 ## Scenario packs — 2026-11-02
 
 Six built-in packs returned by `GET /v1/scenarios`, each with its own stages,

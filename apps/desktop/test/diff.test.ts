@@ -69,6 +69,26 @@ describe('R3 diff and hunk application', () => {
     expect(result.hunks).toHaveLength(1);
   });
 
+  it('places an appended line at the end, not at the start', () => {
+    // Regression: an insertion carries no oldIndex, and the hunk used to fall back
+    // to 0 — so accepting an appended paragraph spliced it above the first line.
+    const before = ['a', 'b', 'c'].join('\n');
+    const after = ['a', 'b', 'c', 'd'].join('\n');
+    const result = diffLines(before, after);
+    expect(result.hunks).toHaveLength(1);
+    expect(result.hunks[0]?.startOld).toBe(3);
+    expect(result.hunks[0]?.endOld).toBe(3);
+    expect(applyHunks(before, after, [result.hunks[0]?.id ?? ''])).toBe(after);
+  });
+
+  it('places a prepended line at the start', () => {
+    const before = ['a', 'b'].join('\n');
+    const after = ['z', 'a', 'b'].join('\n');
+    const result = diffLines(before, after);
+    expect(result.hunks[0]?.startOld).toBe(0);
+    expect(applyHunks(before, after, [result.hunks[0]?.id ?? ''])).toBe(after);
+  });
+
   it('stays fast on a 2000-line diff', () => {
     const before = Array.from({ length: 2000 }, (_, index) => `line ${index}`).join('\n');
     const after = before.replace('line 1000', 'line 1000 changed');

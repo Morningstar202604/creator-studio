@@ -133,13 +133,27 @@ export function EntitiesPage(): React.ReactElement {
         await api.createEntity(id, { type: current.key, title, fields: draft.fields, body: draft.body, tags });
         push(`已新建${current.label}「${title}」`);
       } else {
-        await api.updateEntity(id, editing.id, { title, fields: draft.fields, body: draft.body, tags });
+        await api.updateEntity(id, editing.id, {
+          title,
+          fields: draft.fields,
+          body: draft.body,
+          tags,
+          expectedRevision: editing.revision,
+        });
         push(`已保存「${title}」`);
       }
       resetDraft();
       await load();
     } catch (cause) {
       const message = cause instanceof ApiError || cause instanceof Error ? cause.message : String(cause);
+      // A concurrent edit is not a validation problem: say so in the writer's terms
+      // and tell them to reopen, rather than dumping CARD_STALE in the form.
+      if (cause instanceof ApiError && cause.status === 409) {
+        push('这张卡在你编辑时被改过，已重新载入最新内容，请确认后再保存', 'error');
+        await load();
+        setError(null);
+        return;
+      }
       // Validation failures belong next to the form, not in a toast that disappears.
       setError(message);
       push(message, 'error');
@@ -184,10 +198,17 @@ export function EntitiesPage(): React.ReactElement {
       ),
     );
     try {
-      await api.updateEntity(id, cardId, { fields: nextFields, order: index });
+      await api.updateEntity(id, cardId, { fields: nextFields, order: index, expectedRevision: card.revision });
       push(nextValue === '' ? `已移到未分组` : `已移到「${nextValue}」`);
     } catch (cause) {
       setCards(snapshot);
+      if (cause instanceof ApiError && cause.status === 409) {
+        // Someone else changed this card while it was being dragged. Reload rather
+        // than leaving the board showing a position that was never stored.
+        await load();
+        push('这张卡刚被别处改过，看板已刷新', 'error');
+        return;
+      }
       push(cause instanceof ApiError || cause instanceof Error ? cause.message : String(cause), 'error');
     }
   };

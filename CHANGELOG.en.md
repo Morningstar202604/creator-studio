@@ -8,6 +8,97 @@ The authoritative changelog is written in Chinese in [`CHANGELOG.md`](CHANGELOG.
 this file carries the same release boundaries for English readers and will be
 kept in sync from 0.17.0 onward.
 
+## [0.19.1] - 2026-11-07
+
+A second competitive survey (`docs/COMPETITIVE.md` §7) confirmed MCP is the
+standard integration surface for local-first creator workbenches — and this
+project had tool annotations but no server endpoint. That gap is closed here,
+plus one demo-script fix the 0.19 contract change had orphaned.
+
+### Added
+
+- **Built-in MCP server.** The daemon now serves `POST /mcp` (Streamable HTTP,
+  stateless, via the official `@modelcontextprotocol/sdk`). Ten consolidated
+  tools — list/create projects, read artifacts, generate a stage, run an agent,
+  export the publish pack, search memory — let Claude Desktop, Claude Code,
+  Cursor or any MCP client drive the studio. Every call re-enters the daemon's
+  own HTTP API, so validation, approval gates, audit and revision checks apply
+  unchanged; nothing destructive is exposed. Tests in
+  `apps/daemon/test/mcp.test.ts`, plus an external check with the official SDK
+  client.
+- **Light is the default theme.** First launch used to follow the OS, so a dark
+  system opened straight into dark mode. Light is now the product default;
+  "follow system" remains an option in Settings.
+- **Home-page skeleton.** Before the daemon answers, the landing page renders
+  three breathing placeholder cards (honoring `prefers-reduced-motion`) instead
+  of flashing a fake empty state.
+
+### Fixed
+
+- `scripts/seed-demo.mjs` patched chapter cards without `expectedRevision`,
+  which 0.19's no-silent-overwrite contract rejects — the novel demo data
+  failed to seed. The script now carries the revision it read at creation.
+
+### Changed
+
+- CI builds the three-platform desktop bundles only on `v*` tag pushes; the
+  verify, Postgres-integration and browser-sweep gates stay on every push.
+
+## [0.19.0] - 2026-11-07
+
+Two devices editing the same chapter used to end with the later write silently
+replacing the earlier one — no warning, no way back to the text. This release
+fixes that at the root and adds the history that makes it recoverable.
+
+### Added
+
+- **Chapter version history.** Every write stores the pre-write state in
+  `entity_revisions`, the last 20 per card. The writing desk shows each version's
+  time, length and origin (save / restore / merge), with one-click restore.
+  A restore is written as a new version, so a restore can itself be undone.
+- **Merge prompt.** When an autosave meets someone else's edit, the desk shows
+  "what you are writing" and "what is stored" side by side, with three explicit
+  choices: take theirs, keep mine, keep both (joined by a rule, to trim by hand).
+- Migration `014_entity_revisions.sql` adds `entities.revision` and the history table.
+
+### Fixed
+
+- **Concurrent edits no longer lose text.** A card write is conditional: the check
+  and the write are one `UPDATE … WHERE revision = ?`, not a read followed by a
+  write. A stale write gets `409 CARD_STALE` with the current card; a write that
+  omits the revision gets `428`, so the old behaviour cannot creep back by
+  forgetting a field. Genuine overwrites (migrations, repairs) say `force: true`.
+- **One crashing page no longer blanks the app.** The router sits inside an error
+  boundary keyed on the route: navigation stays, the page can be retried, and
+  project data is untouched.
+- **The packaged app no longer cries wolf on first launch.** The desktop shell
+  starts the daemon as a child process, so the first paint can beat `listen()`.
+  The landing page fetched once and kept a red "cannot connect to local daemon"
+  banner forever, even after the top bar reported "本地已连接". It now reloads the
+  list when the connection recovers from offline to online and clears that stale
+  error; a healthy start still makes exactly one request. Three cases in
+  `apps/desktop/test/startup-race.test.tsx` cover recovery, a healthy start and a
+  genuine outage.
+- **Launching the app no longer drops a black console window over the UI.** node is
+  a console-subsystem program, so the daemon child allocated its own console on
+  top of the interface. It now starts with `CREATE_NO_WINDOW`.
+
+### Changed
+
+- **The installer now bundles a Node runtime.** The desktop build used to require
+  Node.js 22+ on the user's PATH, so a clean enterprise machine was broken out of
+  the box. `install-daemon-deps.mjs` stages the build machine's node binary into
+  the bundle, and the shell prefers it; PATH lookup is a dev-checkout fallback.
+- `PATCH /v1/projects/:id/entities/:cardId` now requires `expectedRevision`.
+  Scripts calling it directly need to send the revision they read.
+- Board drags and card edits reload the current card and say so when they collide
+  with a concurrent change, instead of overwriting silently.
+
+### Removed
+
+- Five debug probe files (`.tmp-*`) that had been committed to the repo root by
+  accident, plus a `.gitignore` rule so they cannot come back.
+
 ## [0.18.1] - 2026-11-05
 
 A targeted security audit found seven critical defects. Each was fixed with a

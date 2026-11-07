@@ -1,7 +1,8 @@
 import { lazy, Suspense, type ComponentType } from 'react';
 import type React from 'react';
-import { HashRouter, Route, Routes } from 'react-router-dom';
+import { HashRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { DaemonProvider } from './DaemonProvider';
+import { ErrorBoundary } from '../components/ErrorBoundary';
 import { PlaceholderPage } from '../components/PlaceholderPage';
 
 function lazyPage<T, K extends keyof T>(loader: () => Promise<T>, name: K) {
@@ -58,8 +59,20 @@ export function AppRoutes(): React.ReactElement {
   return (
     <HashRouter>
       <DaemonProvider>
-        <Suspense fallback={<div className="empty">正在加载页面…</div>}>
-          <Routes>
+        {/* Keyed on the hash so navigating away from a page that threw clears the
+            error: the boundary is per-location, not per-app-lifetime. */}
+        <RouteBoundary />
+      </DaemonProvider>
+    </HashRouter>
+  );
+}
+
+function RouteBoundary(): React.ReactElement {
+  const location = useLocation();
+  return (
+    <ErrorBoundary title="这个页面" resetKey={location.pathname}>
+      <Suspense fallback={<div className="empty">正在加载页面…</div>}>
+        <Routes>
           <Route path="/" element={<ProjectsPage />} />
           <Route path="/p/:id" element={<WorkspacePage />} />
           <Route path="/approvals" element={<ApprovalsPage />} />
@@ -92,9 +105,8 @@ export function AppRoutes(): React.ReactElement {
               />
             }
           />
-          </Routes>
-        </Suspense>
-      </DaemonProvider>
-    </HashRouter>
+        </Routes>
+      </Suspense>
+    </ErrorBoundary>
   );
 }

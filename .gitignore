@@ -8,6 +8,9 @@ apps/desktop/src-tauri/target/
 apps/desktop/dist/
 apps/desktop/src-tauri/daemon-runtime/node_modules/
 apps/desktop/src-tauri/daemon-runtime/package-lock.json
+# Node runtime staged into the installer by scripts/install-daemon-deps.mjs
+apps/desktop/src-tauri/daemon-runtime/node.exe
+apps/desktop/src-tauri/daemon-runtime/node
 workbuddy/
 .workbuddy/
 docs/screenshots-legacy/
@@ -25,6 +28,10 @@ docs/screenshots-demo/
 
 # scratch space used during development
 .tmp/
+# Root-level throwaway probes (`.tmp-*.mjs`, `.tmp-lint-probe.tsx`, ...). The
+# directory rule above does not cover these, and five of them were committed by
+# accident — they are not part of the product.
+.tmp-*
 
 # Python bytecode
 __pycache__/

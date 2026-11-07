@@ -7,12 +7,14 @@ import {
   type DocumentConfig,
   type EntityCard,
   type EntityField,
+  type EntityRevision,
   type Project,
   type ScenarioPack,
 } from '../api';
 import { AppShell, EmptyState, PageHead } from '../components/AppShell';
 import { ToastStack, useToasts } from '../components/Toast';
 import { relativeTime } from '../lib/format';
+import { mergeThreeWay } from '../features/merge';
 
 /**
  * The writing desk.
@@ -66,6 +68,20 @@ export function DocumentPage(): React.ReactElement {
   const [lastExport, setLastExport] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
   const [creating, setCreating] = useState(false);
+  // A rejected conditional write: the text this editor holds, the text now stored,
+  // the version both writers started from, and the row that won. Kept in state so
+  // the merge panel survives re-renders.
+  const [conflict, setConflict] = useState<{
+    mine: string;
+    theyWrote: string;
+    /** What this editor last had in sync — the common ancestor for the merge. */
+    base: string;
+    theyRevision: number;
+    card: EntityCard;
+  } | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [history, setHistory] = useState<EntityRevision[] | null>(null);
+  const [restoring, setRestoring] = useState<number | null>(null);
   const { toasts, push, dismiss } = useToasts();
   const timer = useRef<number | null>(null);
   const pendingCard = useRef<string>('');
@@ -141,36 +157,65 @@ export function DocumentPage(): React.ReactElement {
     async (cardId: string, value: string): Promise<void> => {
       if (cardId === '') return;
       setStatus('saving');
+      const card = cards.find((candidate) => candidate.id === cardId);
+      if (card === undefined) return;
       try {
-        const card = cards.find((candidate) => candidate.id === cardId);
-        if (card === undefined) return;
-        await api.updateEntity(id, cardId, {
+        const result = await api.updateEntity(id, cardId, {
           ...(bodyField === undefined ? { body: value } : { fields: { ...card.fields, [bodyField]: value } }),
+          // Conditional on the revision this client read. If another tab or device
+          // wrote in the meantime the daemon answers 409 instead of overwriting what
+          // they typed — losing text is worse than showing a merge.
+          expectedRevision: card.revision,
         });
         setSavedText(value);
         setStatus('saved');
+        setConflict(null);
         setCards((previous) =>
           previous.map((candidate) =>
             candidate.id === cardId
               ? {
-                  ...candidate,
-                  ...(bodyField === undefined ? { body: value } : { fields: { ...candidate.fields, [bodyField]: value } }),
+                  ...result.card,
+                  ...(bodyField === undefined ? { body: value } : { fields: { ...result.card.fields, [bodyField]: value } }),
                 }
               : candidate,
           ),
         );
       } catch (cause) {
+        if (cause instanceof ApiError && cause.status === 409) {
+          // The daemon returns the current row with the rejection; the merge panel
+          // shows both sides and lets the writer choose sentence by sentence.
+          const stale = cause.body as { card?: EntityCard } | undefined;
+          const theirs = stale?.card;
+          if (theirs !== undefined) {
+            setConflict({
+              theyWrote: cardText(theirs),
+              theyRevision: theirs.revision,
+              mine: value,
+              // The common ancestor is the version this client read, i.e. the card
+              // as it stood at `card.revision` — not whatever is in the editor,
+              // which already contains this client's unsaved edits.
+              base: cardText(card),
+              card: theirs,
+            });
+            setStatus('dirty');
+            return;
+          }
+        }
         setStatus('error');
         setError(cause instanceof ApiError || cause instanceof Error ? cause.message : String(cause));
       }
     },
-    [bodyField, cards, id],
+    [bodyField, cards, id, cardText],
   );
 
   const onChange = (value: string): void => {
     setText(value);
     setStatus(value === savedText ? 'saved' : 'dirty');
     if (active === null) return;
+    // An unresolved conflict blocks autosave on purpose: retrying against the same
+    // stale revision would fail again and could overwrite the merge the writer is
+    // in the middle of deciding.
+    if (conflict !== null) return;
     pendingCard.current = active.id;
     if (timer.current !== null) window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => {
@@ -205,7 +250,120 @@ export function DocumentPage(): React.ReactElement {
       window.clearTimeout(timer.current);
       timer.current = null;
     }
+    // Blurring the editor by clicking a merge button must not fire a retry against
+    // the revision that just lost — that is what re-opened the panel after a merge.
+    if (conflict !== null) return;
     if (active !== null) void flush(active.id, text);
+  };
+
+  /**
+   * Accepts the other side's text wholesale. Explicit, never automatic: a merge
+   * that silently keeps one side is the bug this whole mechanism exists to stop.
+   */
+  const takeTheirs = (): void => {
+    if (conflict === null) return;
+    setText(conflict.theyWrote);
+    setSavedText(conflict.theyWrote);
+    setStatus('saved');
+    setCards((previous) =>
+      previous.map((candidate) => (candidate.id === conflict.card.id ? conflict.card : candidate)),
+    );
+    setConflict(null);
+    push('已采用对方的版本');
+  };
+
+  /** Keeps this editor's text and retries against the revision that just won. */
+  const keepMine = async (): Promise<void> => {
+    if (conflict === null) return;
+    if (timer.current !== null) {
+      window.clearTimeout(timer.current);
+      timer.current = null;
+    }
+    setStatus('saving');
+    try {
+      const result = await api.updateEntity(id, conflict.card.id, {
+        ...(bodyField === undefined
+          ? { body: conflict.mine }
+          : { fields: { ...conflict.card.fields, [bodyField]: conflict.mine } }),
+        expectedRevision: conflict.theyRevision,
+        reason: 'conflict',
+      });
+      setSavedText(conflict.mine);
+      setStatus('saved');
+      setCards((previous) => previous.map((candidate) => (candidate.id === result.card.id ? result.card : candidate)));
+      setConflict(null);
+      push('已保留你的版本，对方的修改留有历史');
+    } catch (cause) {
+      setStatus('error');
+      setError(cause instanceof ApiError || cause instanceof Error ? cause.message : String(cause));
+    }
+  };
+
+  /**
+   * Merges both sides against the common base. Paragraphs only one side touched
+   * are applied once; a paragraph both sides rewrote becomes a marked block the
+   * writer resolves. Nothing is dropped and nothing is duplicated.
+   */
+  const keepBoth = async (): Promise<void> => {
+    if (conflict === null) return;
+    if (timer.current !== null) {
+      window.clearTimeout(timer.current);
+      timer.current = null;
+    }
+    const merged = mergeThreeWay(conflict.base, conflict.mine, conflict.theyWrote).text;
+    setStatus('saving');
+    try {
+      const result = await api.updateEntity(id, conflict.card.id, {
+        ...(bodyField === undefined
+          ? { body: merged }
+          : { fields: { ...conflict.card.fields, [bodyField]: merged } }),
+        expectedRevision: conflict.theyRevision,
+        reason: 'conflict',
+      });
+      setText(merged);
+      setSavedText(merged);
+      setStatus('saved');
+      setCards((previous) => previous.map((candidate) => (candidate.id === result.card.id ? result.card : candidate)));
+      setConflict(null);
+      push('两版已合并，重复段落只保留一份；重叠处按提示自行取舍');
+    } catch (cause) {
+      setStatus('error');
+      setError(cause instanceof ApiError || cause instanceof Error ? cause.message : String(cause));
+    }
+  };
+
+  const openHistory = async (): Promise<void> => {
+    if (active === null) return;
+    setHistoryOpen(true);
+    setHistory(null);
+    try {
+      const result = await api.cardRevisions(id, active.id);
+      setHistory(result.revisions);
+    } catch (cause) {
+      setHistory([]);
+      push(cause instanceof ApiError || cause instanceof Error ? cause.message : String(cause), 'error');
+    }
+  };
+
+  const restoreVersion = async (revision: number): Promise<void> => {
+    if (active === null) return;
+    setRestoring(revision);
+    try {
+      const result = await api.restoreCardRevision(id, active.id, revision);
+      const restored = cardText(result.card);
+      setText(restored);
+      setSavedText(restored);
+      setStatus('saved');
+      setConflict(null);
+      setCards((previous) => previous.map((candidate) => (candidate.id === result.card.id ? result.card : candidate)));
+      push(`已恢复到第 ${revision} 版`);
+      const refreshed = await api.cardRevisions(id, active.id);
+      setHistory(refreshed.revisions);
+    } catch (cause) {
+      push(cause instanceof ApiError || cause instanceof Error ? cause.message : String(cause), 'error');
+    } finally {
+      setRestoring(null);
+    }
   };
 
   const createChapter = async (): Promise<void> => {
@@ -342,6 +500,9 @@ export function DocumentPage(): React.ReactElement {
         <button className="btn" onClick={() => void load()}>
           刷新
         </button>
+        <button className="btn" disabled={active === null} onClick={() => void openHistory()}>
+          版本历史
+        </button>
         <button className="btn" onClick={() => navigate(`/p/${id}/timeline`)}>
           时间轴
         </button>
@@ -351,6 +512,78 @@ export function DocumentPage(): React.ReactElement {
       </PageHead>
 
       {error !== null && <div className="panel error-panel">{error}</div>}
+
+      {conflict !== null && (
+        <div className="panel conflict-panel" role="alert">
+          <div className="row">
+            <span className="panel-title">这一章在别处被改过了</span>
+            <span className="spacer" />
+            <span className="hint">对方已保存到第 {conflict.theyRevision} 版</span>
+          </div>
+          <p className="hint">
+            你的自动保存被拒绝了，没有覆盖对方的文字。选一边，或者两边都留下再自己删减。
+          </p>
+          <div className="conflict-compare">
+            <div>
+              <div className="conflict-label">你正在写的</div>
+              <pre className="conflict-text">{conflict.mine.trim() === '' ? '（空）' : conflict.mine}</pre>
+            </div>
+            <div>
+              <div className="conflict-label">已经存下的</div>
+              <pre className="conflict-text">{conflict.theyWrote.trim() === '' ? '（空）' : conflict.theyWrote}</pre>
+            </div>
+          </div>
+          <div className="row">
+            <button className="btn sm" onClick={takeTheirs}>
+              采用对方的
+            </button>
+            <button className="btn sm" onClick={() => void keepBoth()}>
+              两边都留
+            </button>
+            <button className="btn sm primary" onClick={() => void keepMine()}>
+              保留我的
+            </button>
+          </div>
+        </div>
+      )}
+
+      {historyOpen && (
+        <div className="panel history-panel">
+          <div className="row">
+            <span className="panel-title">版本历史 · {active?.title ?? '本章'}</span>
+            <span className="spacer" />
+            <button className="btn sm ghost" onClick={() => setHistoryOpen(false)}>
+              收起
+            </button>
+          </div>
+          {history === null ? (
+            <p className="hint">正在读取…</p>
+          ) : history.length === 0 ? (
+            <p className="hint">还没有更早的版本。每次保存都会留下一份，最多 20 份。</p>
+          ) : (
+            <ul className="history-list">
+              {history.map((version) => (
+                <li key={version.id}>
+                  <span className="history-rev">第 {version.revision} 版</span>
+                  <span className="hint">{relativeTime(version.createdAt)}</span>
+                  <span className="hint">
+                    {countWords(stripMarkdown(version.body || (bodyField === undefined ? '' : (version.fields[bodyField] ?? ''))))} 字
+                  </span>
+                  {version.reason === 'restore' && <span className="badge">恢复自更早版本</span>}
+                  <span className="spacer" />
+                  <button
+                    className="btn sm"
+                    disabled={restoring !== null}
+                    onClick={() => void restoreVersion(version.revision)}
+                  >
+                    {restoring === version.revision ? '恢复中…' : '恢复到这一版'}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       <div className="desk">
         <aside className="desk-rail">

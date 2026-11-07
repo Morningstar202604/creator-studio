@@ -57,10 +57,23 @@ client uses to decide how careful to be — `readOnlyHint`, `destructiveHint`,
 through verbatim. A client that already understands MCP can reason about our tools
 with no custom mapping.
 
-**Not done, deliberately:** we are not an MCP server or client. That is a protocol
+**Not done, deliberately:** we were not an MCP server or client. That is a protocol
 boundary with its own transport (stdio, streamable HTTP), session lifecycle and
 capability negotiation. Claiming MCP compliance without it would be worse than
 being honest about where we are.
+
+**Since 0.19.1:** the daemon **is an MCP server**. `POST /mcp` speaks Streamable
+HTTP, stateless per the 2026-07-28 spec (fresh server + transport per request, no
+session ids). Ten consolidated tools cover the whole studio surface —
+`list_projects`, `get_project`, `list_scenarios`, `create_project`,
+`list_artifacts`, `read_artifact`, `generate_artifact`, `run_agent`,
+`publish_pack`, `search_memory` — and each call re-enters the daemon's own HTTP
+API over loopback, so MCP clients inherit the same validation, approval gating,
+audit trail and revision checks the first-party clients get. There is no second,
+weaker code path. Verified by `apps/daemon/test/mcp.test.ts` (protocol handshake,
+tool listing, real calls) and an external check with the official SDK client.
+Still not done: we are not an MCP *client*, and the endpoint does not offer
+`resources`/`prompts` yet — the tool surface is what hosts actually drive.
 
 ### A2A — agent to agent
 
@@ -155,6 +168,7 @@ capability.
 | Approval-gated tools | yes (per-tool, single use) | partial | no | yes | yes |
 | Resumable runs | yes | yes | yes | yes | yes |
 | Tool annotations (MCP) | yes | partial | no | no | yes |
+| MCP server endpoint | yes (`POST /mcp`, 10 tools) | no | no | no | no |
 | Agent Card (A2A) | yes | no | no | no | no |
 | AG-UI event names | partial | no | no | no | no |
 | OTLP export | no | yes | yes | partial | no |

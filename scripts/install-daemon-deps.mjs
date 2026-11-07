@@ -23,6 +23,13 @@ mkdirSync(out, { recursive: true });
 
 cpSync(dist, join(out, 'dist'), { recursive: true });
 
+// Ship a Node runtime with the installer so the app starts on a machine that has
+// nothing but this installer. `process.execPath` is the node binary running this
+// script, so each CI platform bundles its own build without extra downloads.
+const nodeDest = join(out, platform === 'win32' ? 'node.exe' : 'node');
+copyFileSync(process.execPath, nodeDest);
+console.log(`bundled runtime node: ${nodeDest}`);
+
 const pkg = JSON.parse(readFileSync(join(root, 'apps', 'daemon', 'package.json'), 'utf8'));
 // Workspace deps are bundled into dist by tsc; only external packages are needed.
 const deps = pkg.dependencies ?? {};

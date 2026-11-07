@@ -864,6 +864,9 @@ v0.11 之前，长篇小说的章节只有两种呈现：卡片板（`board`）�
 | 下载 | `GET /manuscript/download/:name` 只接受 `^[a-z0-9][a-z0-9-]*\.(docx\|md)$`，不做通用静态服务 |
 | 看板拖拽 | `@dnd-kit/core` + `@dnd-kit/utilities`；拖动手柄是独立按钮，普通点击仍然打开卡片 |
 | 卡片顺序 | `PATCH /entities/:cardId` 接受 `order`（≥0 整数），与字段一起写入 |
+| 并发写保护 | 卡片带 `revision`；PATCH 必须回传 `expectedRevision`，服务端用一条 `UPDATE … WHERE revision = ?` 完成校验与写入。落后返回 409 `CARD_STALE` + 当前卡片，缺版本号返回 428。看板拖拽与卡片编辑同样带上版本号 |
+| 版本历史 | 每次写入把写入前状态存进 `entity_revisions`（每卡上限 20 条，`reason` 记 save/restore/conflict）。`GET .../revisions` 与 `POST .../revisions/:n/restore` 支撑写作台的版本抽屉；恢复本身也写成新版本 |
+| 三方合并 | `apps/desktop/src/features/merge.ts`：以「客户端读到的版本」为公共祖先，两侧 hunk 应用到 base；只有一侧改动的段落只出现一次，同一段落两侧都改写时输出带标记的冲突块 |
 
 ### 9.11.3 v0.12 验证
 
@@ -1075,7 +1078,8 @@ v0.7 把这一层抽成数据：**场景包（ScenarioPack）声明阶段、视�
 | 表 | 作用 |
 |---|---|
 | `scenario_packs` | 包的 JSON 载荷 + `builtin` 标记；内置四套随启动从代码刷新，用户包不动 |
-| `entities` | 所有卡片一张表：`project_id` + `type` + `fields`(JSON) + `body` + `tags` + `sort_order` |
+| `entities` | 所有卡片一张表：`project_id` + `type` + `fields`(JSON) + `body` + `tags` + `sort_order` + `revision` |
+| `entity_revisions` | 卡片的历史状态（每卡最近 20 条），写入前快照，`reason` 区分保存/恢复/冲突 |
 | `projects.scenario_id` | 项目所属包；缺省 `video`，保证老数据可用 |
 
 卡片字段校验不是数据库约束，而是**按包声明的 schema 校验**（必填、未知字段、select 必须有选项、
@@ -1295,6 +1299,8 @@ Postgres 版本应把这些访问器实现为 `WHERE user_id = $1`，并叠加 R
 
 | 日期 | 变更摘要 | 影响的章节 | 关联任务/ADR | 验证方式 |
 |---|---|---|---|---|
+| 2026-11-07 | v0.19.1：内置 MCP 服务端——`POST /mcp`（Streamable HTTP、无状态、官方 SDK），10 个收敛工具回环走自家 API，审批/审计/版本检查原样生效；亮色成为默认主题（跟随系统降为可选项）；首页骨架屏（`prefers-reduced-motion` 兼容）；seed-demo 适配 `expectedRevision` 契约；CI 桌面打包改为仅 tag 触发 | §8 Agent 接入、§7 前端 | 0.20 前置（COMPETITIVE §7 调研结论） | `mcp.test.ts` 5 例 + 官方 SDK Client 外部实测（10 工具、真实建项）/ `pnpm verify` 711 passed + 9 Postgres / 对比度与版本一致性通过 |
+| 2026-11-07 | v0.19：多设备写作——卡片写入改为按版本号的条件写（`UPDATE … WHERE revision = ?`），撞版本返回 409 并附当前卡，缺版本号返回 428，`force: true` 显式覆盖；章节版本历史（每卡 20 份，恢复本身也是新版本）；并排合并提示（用他的/留我的/两边都留）；路由级错误边界；打包壳修复——安装包自带 Node 运行时（不再要求用户机器装 Node）、子进程 `CREATE_NO_WINDOW`（不再弹黑色控制台）、daemon 离线恢复后首页自动重载（不再永久挂「无法连接本地 daemon」） | §5、§7.5、§9、§10 | 0.19 | `pnpm verify` 706 passed + 9 Postgres / `tauri build` 36.15 MiB 安装包真机启动 / 延迟 daemon 20s 强制复现竞态：横幅出现→自动消失 / `startup-race.test.tsx` 3 例、`packaged-shell.test.ts` 2 例 |
 | 2026-11-02 | v0.17：质量门禁补强——lint 作为 fail-closed 门禁、离线模型冒烟（成功/坏输出/超时/取消/脱敏/预算）、AbortSignal 贯穿到 fetch、Postgres 集成缺 URL 即失败、浏览器点击巡检入 CI、ECharts 与 Cytoscape 按需拆包；修桌面端随机失败测试（异步预算 1s → 5s）；新增版本一致性校验与 STATUS/ROADMAP/RELEASING/VERIFICATION 四份管理文档 | §10 质量门禁 | T70–T72 | `pnpm verify` 642 passed + 9 skipped 连续 5 次 / shoot 26 页 0 error 0 溢出 / click-sweep 583 次点击 0 发现 / API 全链路 7 产物 + 检查表全绿 + 导出 zip |
 | 2026-10-28 | v0.16：项目卡进度语义、阶段 chip 单行滚动、模型 chip 省略、深色进度条对比度、时间轴内边距、资料库计数文案；ECharts 改为按需组装（1090 → 547 KB） | §9.15 | T68–T69 | `pnpm verify` 636 passed + 9 skipped / 20 页 × 2 宽度 × 2 主题 0 error 0 溢出 / 打包体积实测 |
 | 2026-10-27 | v0.15：交互巡检脚本（728 次点击 + 键盘遍历，按场景包推导路由）、修写作台新建章节 400 与空项目可视化空骨架 | §9.14 | T66–T67 | `pnpm verify` 634 passed + 9 skipped / click-sweep 0 findings / 2 张新截图 |

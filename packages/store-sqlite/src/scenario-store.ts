@@ -4,6 +4,7 @@ import {
   BUILTIN_PACKS,
   EntityCardSchema,
   EntityRelationSchema,
+  EntityRevisionSchema,
   PACK_FORMAT_VERSION,
   negotiatePack,
   resolveInheritance,
@@ -13,6 +14,7 @@ import {
   type EntityCardInput,
   type EntityCardWithLinks,
   type EntityRelation,
+  type EntityRevision,
   type ScenarioPack,
 } from '@creator-studio/protocol';
 
@@ -36,9 +38,40 @@ type EntityRow = {
   body: string;
   tags: string;
   sort_order: number;
+  revision: number;
   created_at: string;
   updated_at: string;
 };
+
+type EntityRevisionRow = {
+  id: string;
+  entity_id: string;
+  project_id: string;
+  revision: number;
+  title: string;
+  fields: string;
+  body: string;
+  tags: string;
+  reason: string;
+  created_at: string;
+};
+
+/**
+ * How many past states are kept per card. Autosave fires every few seconds while
+ * someone types, so an unbounded log would grow faster than the prose. Twenty is
+ * roughly ten minutes of writing at the desk's cadence — enough to undo a bad
+ * paste or a wrong restore without turning the database into a journal.
+ */
+export const REVISION_HISTORY_LIMIT = 20;
+
+/**
+ * Outcome of a card write. `stale` carries the row as it stands now, because the
+ * caller's merge prompt needs to show the other edit rather than just fail.
+ */
+export type CardWriteResult =
+  | { ok: true; card: EntityCard }
+  | { ok: false; reason: 'not-found' }
+  | { ok: false; reason: 'stale'; current: EntityCard };
 
 function parseJson<T>(raw: string, fallback: T): T {
   try {
@@ -132,8 +165,24 @@ function toCard(row: EntityRow): EntityCard {
     body: row.body,
     tags: parseJson<string[]>(row.tags, []),
     order: row.sort_order,
+    revision: row.revision,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  });
+}
+
+function toRevision(row: EntityRevisionRow): EntityRevision {
+  return EntityRevisionSchema.parse({
+    id: row.id,
+    entityId: row.entity_id,
+    projectId: row.project_id,
+    revision: row.revision,
+    title: row.title,
+    fields: parseJson<Record<string, string>>(row.fields, {}),
+    body: row.body,
+    tags: parseJson<string[]>(row.tags, []),
+    reason: row.reason,
+    createdAt: row.created_at,
   });
 }
 
@@ -282,13 +331,14 @@ export class SqliteScenarioStore {
       id: randomUUID(),
       projectId,
       order: nextOrder + 1,
+      revision: 1,
       createdAt: timestamp,
       updatedAt: timestamp,
     });
     this.db
       .prepare(
-        `INSERT INTO entities (id, project_id, type, title, fields, body, tags, sort_order, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO entities (id, project_id, type, title, fields, body, tags, sort_order, revision, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         card.id,
@@ -299,40 +349,147 @@ export class SqliteScenarioStore {
         card.body,
         JSON.stringify(card.tags),
         card.order,
+        card.revision,
         card.createdAt,
         card.updatedAt,
       );
     return card;
   }
 
-  updateCard(projectId: string, cardId: string, input: Partial<EntityCardInput> & { order?: number }): EntityCard | null {
+  /**
+   * Writes a card, optionally conditional on the revision the caller last read.
+   *
+   * Without `expectedRevision` the write is unconditional (drag-and-drop moves,
+   * internal repairs). With it the UPDATE carries `revision = ?` in its WHERE
+   * clause, so the check and the write are one atomic statement rather than a
+   * read-then-write that another process could interleave with. A miss means the
+   * row changed under the caller and is reported as `{ conflict: 'stale' }` — the
+   * caller decides whether to merge, retry or ask the user.
+   */
+  updateCard(
+    projectId: string,
+    cardId: string,
+    input: Partial<EntityCardInput> & {
+      order?: number;
+      expectedRevision?: number;
+      reason?: 'save' | 'restore' | 'conflict';
+    },
+  ): CardWriteResult {
     const current = this.getCard(projectId, cardId);
-    if (current === null) return null;
+    if (current === null) return { ok: false, reason: 'not-found' };
+    if (input.expectedRevision !== undefined && input.expectedRevision !== current.revision) {
+      return { ok: false, reason: 'stale', current };
+    }
     const next = EntityCardSchema.parse({
       ...current,
       ...input,
       id: current.id,
       projectId: current.projectId,
       order: input.order ?? current.order,
+      revision: current.revision + 1,
       createdAt: current.createdAt,
       updatedAt: this.now().toISOString(),
     });
+    const written = this.db.transaction((): boolean => {
+      const changed = this.db
+        .prepare(
+          `UPDATE entities SET title = ?, fields = ?, body = ?, tags = ?, sort_order = ?, revision = ?, updated_at = ?
+           WHERE id = ? AND project_id = ? AND revision = ?`,
+        )
+        .run(
+          next.title,
+          JSON.stringify(next.fields),
+          next.body,
+          JSON.stringify(next.tags),
+          next.order,
+          next.revision,
+          next.updatedAt,
+          next.id,
+          projectId,
+          current.revision,
+        ).changes;
+      if (changed === 0) return false;
+      this.recordRevision(current, input.reason ?? 'save');
+      return true;
+    });
+    if (!written()) {
+      const after = this.getCard(projectId, cardId);
+      return after === null ? { ok: false, reason: 'not-found' } : { ok: false, reason: 'stale', current: after };
+    }
+    return { ok: true, card: next };
+  }
+
+  /**
+   * Appends the pre-write state and trims the tail. Called inside the write
+   * transaction so a crash can never leave a revision without its card or a card
+   * without its predecessor.
+   */
+  private recordRevision(
+    previous: EntityCard,
+    reason: 'save' | 'restore' | 'conflict',
+    timestamp = this.now().toISOString(),
+  ): void {
     this.db
       .prepare(
-        `UPDATE entities SET title = ?, fields = ?, body = ?, tags = ?, sort_order = ?, updated_at = ?
-         WHERE id = ? AND project_id = ?`,
+        `INSERT INTO entity_revisions (id, entity_id, project_id, revision, title, fields, body, tags, reason, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
-        next.title,
-        JSON.stringify(next.fields),
-        next.body,
-        JSON.stringify(next.tags),
-        next.order,
-        next.updatedAt,
-        next.id,
-        projectId,
+        randomUUID(),
+        previous.id,
+        previous.projectId,
+        previous.revision,
+        previous.title,
+        JSON.stringify(previous.fields),
+        previous.body,
+        JSON.stringify(previous.tags),
+        reason,
+        timestamp,
       );
-    return next;
+    this.db
+      .prepare(
+        `DELETE FROM entity_revisions
+         WHERE entity_id = ? AND id NOT IN (
+           SELECT id FROM entity_revisions WHERE entity_id = ? ORDER BY revision DESC LIMIT ?
+         )`,
+      )
+      .run(previous.id, previous.id, REVISION_HISTORY_LIMIT);
+  }
+
+  /** Past states of a card, newest first. */
+  listRevisions(projectId: string, cardId: string, limit = REVISION_HISTORY_LIMIT): EntityRevision[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM entity_revisions
+         WHERE entity_id = ? AND project_id = ?
+         ORDER BY revision DESC LIMIT ?`,
+      )
+      .all(cardId, projectId, limit) as EntityRevisionRow[];
+    return rows.map(toRevision);
+  }
+
+  /** Reads one stored revision, scoped to the project so ids cannot be guessed across projects. */
+  getRevision(projectId: string, cardId: string, revision: number): EntityRevision | null {
+    const row = this.db
+      .prepare('SELECT * FROM entity_revisions WHERE entity_id = ? AND project_id = ? AND revision = ?')
+      .get(cardId, projectId, revision) as EntityRevisionRow | undefined;
+    return row === undefined ? null : toRevision(row);
+  }
+
+  /**
+   * Puts a card back to a stored revision. The restore is itself a normal write,
+   * so it bumps the revision and snapshots the state it replaced — undo works.
+   */
+  restoreRevision(projectId: string, cardId: string, revision: number): CardWriteResult {
+    const target = this.getRevision(projectId, cardId, revision);
+    if (target === null) return { ok: false, reason: 'not-found' };
+    return this.updateCard(projectId, cardId, {
+      title: target.title,
+      fields: target.fields,
+      body: target.body,
+      tags: target.tags,
+      reason: 'restore',
+    });
   }
 
   deleteCard(projectId: string, cardId: string): boolean {

@@ -130,10 +130,75 @@ describe('R3 cards are project-scoped and type-validated', () => {
     const card = scenarios.listCards('p1')[0];
     if (card === undefined) throw new Error('expected a card');
     const updated = scenarios.updateCard('p1', card.id, { title: '林砚（改）', fields: { ...card.fields, goal: '新目标' } });
-    expect(updated?.title).toBe('林砚（改）');
-    expect(updated?.fields['goal']).toBe('新目标');
+    if (!updated.ok) throw new Error(`expected a write, got ${updated.reason}`);
+    expect(updated.card.title).toBe('林砚（改）');
+    expect(updated.card.fields['goal']).toBe('新目标');
+    expect(updated.card.revision).toBe(card.revision + 1);
     expect(scenarios.deleteCard('p1', card.id)).toBe(true);
     expect(scenarios.getCard('p1', card.id)).toBeNull();
+  });
+
+  it('refuses a write based on a stale revision and returns the current row', () => {
+    const created = scenarios.createCard('p1', {
+      type: 'character',
+      title: '许舟',
+      fields: { name: '许舟', role: '配角', goal: '守住灯塔' },
+      body: '',
+      tags: [],
+    });
+    const first = scenarios.updateCard('p1', created.id, { body: '第一版', expectedRevision: 1 });
+    if (!first.ok) throw new Error('expected first write');
+    // Second client still holds revision 1 — it read before the first write landed.
+    const stale = scenarios.updateCard('p1', created.id, { body: '第二版', expectedRevision: 1 });
+    expect(stale.ok).toBe(false);
+    if (stale.ok) throw new Error('unreachable');
+    expect(stale.reason).toBe('stale');
+    if (stale.reason !== 'stale') throw new Error('unreachable');
+    expect(stale.current.body).toBe('第一版');
+    expect(stale.current.revision).toBe(2);
+    // The loser's text is still recoverable: the retry with the fresh revision wins.
+    const retry = scenarios.updateCard('p1', created.id, { body: '第二版', expectedRevision: 2 });
+    expect(retry.ok).toBe(true);
+  });
+
+  it('keeps a bounded revision history and restores an earlier version', () => {
+    const created = scenarios.createCard('p1', {
+      type: 'character',
+      title: '存档',
+      fields: { name: '存档', role: '配角', goal: '被改写' },
+      body: '原始正文',
+      tags: [],
+    });
+    for (let index = 0; index < 5; index += 1) {
+      const write = scenarios.updateCard('p1', created.id, { body: `第 ${index + 2} 版` });
+      if (!write.ok) throw new Error('expected write');
+    }
+    const history = scenarios.listRevisions('p1', created.id);
+    expect(history.length).toBe(5);
+    expect(history[0]?.body).toBe('第 5 版');
+    expect(history.at(-1)?.body).toBe('原始正文');
+    // Restoring writes a new revision rather than rewinding the counter, so the
+    // version that was replaced stays in history and the restore is itself undoable.
+    const restored = scenarios.restoreRevision('p1', created.id, 1);
+    if (!restored.ok) throw new Error(`expected restore, got ${restored.reason}`);
+    expect(restored.card.body).toBe('原始正文');
+    expect(restored.card.revision).toBe(7);
+    expect(scenarios.listRevisions('p1', created.id)[0]?.reason).toBe('restore');
+  });
+
+  it('caps history at the documented limit', () => {
+    const created = scenarios.createCard('p1', {
+      type: 'character',
+      title: '长跑',
+      fields: { name: '长跑', role: '配角', goal: '写很多次' },
+      body: '起点',
+      tags: [],
+    });
+    for (let index = 0; index < 30; index += 1) {
+      const write = scenarios.updateCard('p1', created.id, { body: `版本 ${index}` });
+      if (!write.ok) throw new Error('expected write');
+    }
+    expect(scenarios.listRevisions('p1', created.id)).toHaveLength(20);
   });
 });
 

@@ -19,7 +19,7 @@ export function useTheme(): { mode: ThemeMode; setMode: (mode: ThemeMode) => voi
   const [mode, setModeState] = useState<ThemeMode>(() => {
     if (typeof window === 'undefined') return 'light';
     const stored = window.localStorage.getItem(KEY);
-    return stored === 'dark' || stored === 'light' || stored === 'system' ? stored : 'system';
+    return stored === 'dark' || stored === 'light' || stored === 'system' ? stored : 'light';
   });
 
   useEffect(() => {
@@ -43,5 +43,7 @@ export function useTheme(): { mode: ThemeMode; setMode: (mode: ThemeMode) => voi
 export function bootTheme(): void {
   if (typeof window === 'undefined') return;
   const stored = window.localStorage.getItem(KEY);
-  apply(stored === 'dark' || stored === 'light' ? stored : 'system');
+  // Light is the product default; only an explicit stored choice may override
+  // it. A dark OS should not silently restyle a first launch.
+  apply(stored === 'dark' || stored === 'light' || stored === 'system' ? stored : 'light');
 }

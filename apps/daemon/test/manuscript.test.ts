@@ -153,10 +153,13 @@ describe('R4 card order is stored on the card', () => {
     const projectId = await novelProject();
     const third = await addChapter(projectId, '第三章', '3', '丙');
     await addChapter(projectId, '第一章', '1', '甲');
-    // Drag in the board writes order values without a chapter number.
+    // Drag in the board writes order values without a chapter number, carrying the
+    // revision it read so a concurrent edit is not clobbered.
+    const before = await api(`/v1/projects/${projectId}/entities?type=chapter`);
+    const current = before.body.cards.find((card: { id: string }) => card.id === third);
     const patched = await api(`/v1/projects/${projectId}/entities/${third}`, {
       method: 'PATCH',
-      body: JSON.stringify({ order: 0 }),
+      body: JSON.stringify({ order: 0, expectedRevision: current.revision }),
     });
     expect(patched.status).toBe(200);
     expect(patched.body.card.order).toBe(0);

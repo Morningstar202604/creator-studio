@@ -393,10 +393,47 @@ export const EntityCardSchema = EntityCardInputSchema.extend({
   projectId: z.string().min(1),
   /** Position within its column/board; lower comes first. */
   order: z.number().int().nonnegative(),
+  /**
+   * Row version, bumped on every write. A client echoes the revision it read and
+   * the daemon refuses the write when the row has moved on, which is what stops
+   * two editors from silently overwriting each other.
+   */
+  revision: z.number().int().positive().default(1),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
 export type EntityCard = z.infer<typeof EntityCardSchema>;
+
+/**
+ * One stored past state of a card. `revision` is the version this snapshot
+ * represents, so "restore to revision 7" is unambiguous.
+ */
+export const EntityRevisionSchema = z.object({
+  id: z.string().min(1),
+  entityId: z.string().min(1),
+  projectId: z.string().min(1),
+  revision: z.number().int().positive(),
+  title: z.string(),
+  fields: z.record(z.string(), z.string()),
+  body: z.string(),
+  tags: z.array(z.string()),
+  reason: z.enum(['save', 'restore', 'conflict']),
+  createdAt: z.string(),
+});
+export type EntityRevision = z.infer<typeof EntityRevisionSchema>;
+
+/**
+ * Body of a conditional card update. `expectedRevision` is mandatory when the
+ * caller wants conflict detection; omitting it keeps the old unconditional
+ * behaviour for internal callers such as drag-and-drop reordering.
+ */
+export const EntityCardPatchSchema = EntityCardInputSchema.partial().extend({
+  order: z.number().int().nonnegative().optional(),
+  expectedRevision: z.number().int().positive().optional(),
+  /** Set when the client already resolved a conflict by merging; recorded in history. */
+  reason: z.enum(['save', 'restore', 'conflict']).optional(),
+});
+export type EntityCardPatch = z.infer<typeof EntityCardPatchSchema>;
 
 /** A directed link between two cards in the same project. */
 export const EntityRelationSchema = z.object({

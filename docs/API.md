@@ -155,7 +155,9 @@ Base：`http://127.0.0.1:7878`（daemon 默认只绑回环）。所有响应为 
 | GET | `/v1/projects/:id/entities` | 全部卡片 + 按 type 的计数；`?type=` 过滤。带 `type` 时额外返回 `entityType`（字段 schema）、`board`（分组配置）与 `document`（写作阶段配置） |
 | GET | `/v1/projects/:id` | 项目详情；`stats` 含 `artifacts`、`runs`、`tokens`、`costCny` 以及卡片总数 `cards` |
 | POST | `/v1/projects/:id/entities` | `{ type, title, fields, body?, tags? }`；按场景包校验，失败 400 `INVALID_CARD` |
-| PATCH | `/v1/projects/:id/entities/:cardId` | 局部更新；可带 `order`（≥0 整数）用于看板拖拽排序；跨项目 id 视为不存在 |
+| PATCH | `/v1/projects/:id/entities/:cardId` | 局部更新；**必须**带 `expectedRevision`（读过的那一版），可带 `order`（≥0 整数）用于看板拖拽排序；跨项目 id 视为不存在 |
+| GET | `/v1/projects/:id/entities/:cardId/revisions` | 该卡的历史版本，新→旧，最多 20 条；返回 `current` 与 `revisions[]` |
+| POST | `/v1/projects/:id/entities/:cardId/revisions/:revision/restore` | 恢复到某一版；恢复本身也是一次新写入，被替换的内容仍留在历史里 |
 | DELETE | `/v1/projects/:id/entities/:cardId` | 删除；不存在 404 |
 
 `fields` 是 `Record<string, string>`，单值 ≤2000 字符，整卡载荷 ≤8000 字符；
@@ -163,6 +165,22 @@ Base：`http://127.0.0.1:7878`（daemon 默认只绑回环）。所有响应为 
 
 `board.groupBy` 必须指向该卡片类型上真实存在的 `select` 字段；`document` 的 `bodyField`/`titleField`/`orderField`
 同理，包加载时校验，写错的包在导入阶段就会被拒绝。
+
+### 并发写保护（v0.19）
+
+每张卡有 `revision`，每次写入 +1。PATCH 必须回传读取时的 `expectedRevision`；
+服务端的检查与写入是同一条 `UPDATE … WHERE revision = ?`，不是先读后写：
+
+| 情况 | 响应 |
+|---|---|
+| 版本一致 | `200 { card }`，`card.revision` 已 +1 |
+| 版本落后（别处先写了） | `409 CARD_STALE`，响应体带 `card`（当前真实内容），供客户端合并而不是猜 |
+| 没带 `expectedRevision` | `428 EXPECTED_REVISION_REQUIRED` + 当前 `card`。这种请求过去会静默覆盖别人刚写的字，所以默认拒绝 |
+| 确实要「覆盖当前内容」 | 显式 `force: true`（迁移、修复用），不走编辑路径 |
+
+每次写入把**写入前**的状态存进 `entity_revisions`（每卡最多 20 条），
+`reason` 区分 `save` / `restore` / `conflict`。恢复不倒退计数器，而是写成一个新版本，
+所以恢复本身也能撤销。
 
 ## 写作与手稿（v0.12）
 
