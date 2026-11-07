@@ -23,6 +23,17 @@ mkdirSync(out, { recursive: true });
 
 cpSync(dist, join(out, 'dist'), { recursive: true });
 
+// The daemon serves the built UI itself in web mode. Without a copy inside the
+// staged runtime an installed app answered 404 on `/`, which meant the "web plus
+// backend" entry point did not exist for anyone who used the installer.
+const webDist = join(root, 'apps', 'desktop', 'dist');
+if (existsSync(join(webDist, 'index.html'))) {
+  cpSync(webDist, join(out, 'dist', 'web'), { recursive: true });
+  console.log(`bundled web UI: ${join(out, 'dist', 'web')}`);
+} else {
+  console.warn('desktop dist missing; the installed app will have no web UI (run pnpm -r build first)');
+}
+
 // Ship a Node runtime with the installer so the app starts on a machine that has
 // nothing but this installer. `process.execPath` is the node binary running this
 // script, so each CI platform bundles its own build without extra downloads.

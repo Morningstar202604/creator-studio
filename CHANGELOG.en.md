@@ -8,6 +8,24 @@ The authoritative changelog is written in Chinese in [`CHANGELOG.md`](CHANGELOG.
 this file carries the same release boundaries for English readers and will be
 kept in sync from 0.17.0 onward.
 
+## [0.19.2] - 2026-11-07
+
+After installing the package, opening `http://127.0.0.1:7878/` returned 404. The
+desktop shell loads its own assets, so this was invisible in the exe — the broken
+thing was the web-plus-backend entry point itself.
+
+### Fixed
+
+- **The installed app had no web UI.** Packaging copied only the daemon's `dist`
+  into the runtime, never the built front end; and the daemon's lookup knew the repo
+  layout and a sibling `web/`, not `dist/web`. `install-daemon-deps.mjs` now copies
+  the UI to `daemon-runtime/dist/web` and `findWebRoot()` checks that first.
+  `apps/daemon/test/web-root.test.ts` pins it with four cases: root serves
+  index.html, a real asset is reachable, an unknown path falls back to the SPA, and
+  `/v1/*` still answers a JSON 404.
+- Verified by installing silently, launching, and checking `curl /` returns 200
+  `text/html` with the shell, first-run wizard and light theme rendering.
+
 ## [0.19.1] - 2026-11-07
 
 A second competitive survey (`docs/COMPETITIVE.md` §7) confirmed MCP is the

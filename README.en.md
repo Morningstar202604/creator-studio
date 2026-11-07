@@ -8,7 +8,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Windows-x64-0078D4?style=flat-square" alt="Windows">
-  <img src="https://img.shields.io/badge/tests-711%20passing%20%C2%B7%200%20skipped-brightgreen?style=flat-square" alt="tests">
+  <img src="https://img.shields.io/badge/tests-715%20passing%20%C2%B7%200%20skipped-brightgreen?style=flat-square" alt="tests">
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT">
 </p>
 
@@ -24,7 +24,7 @@
 
 ## Install
 
-Download `CreatorStudio_0.19.1_x64-setup.exe` from [Releases](https://github.com/Morningstar202604/creator-studio/releases/latest) and run it. The installer bundles its own runtime — no Node install needed.
+Download `CreatorStudio_0.19.2_x64-setup.exe` from [Releases](https://github.com/Morningstar202604/creator-studio/releases/latest) and run it. The installer bundles its own runtime — no Node install needed.
 
 Or run it from source:
 
@@ -122,7 +122,7 @@ Demo recording: [`docs/media/demo.mp4`](docs/media/demo.mp4).
 
 ## Status
 
-711 tests, 0 skipped. The suite includes nine Postgres tenant-isolation tests against a real cluster, a browser pass over 27 pages (0 console errors, 0 layout overflow), and a full pipeline run against a local model stub.
+715 tests, 0 skipped. The suite includes nine Postgres tenant-isolation tests against a real cluster, a browser pass over 27 pages (0 console errors, 0 layout overflow), and a full pipeline run against a local model stub.
 
 | Works today | Not yet |
 |---|---|

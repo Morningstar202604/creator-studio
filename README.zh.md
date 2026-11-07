@@ -8,7 +8,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Windows-x64-0078D4?style=flat-square" alt="Windows">
-  <img src="https://img.shields.io/badge/tests-711%20passing%20%C2%B7%200%20skipped-brightgreen?style=flat-square" alt="tests">
+  <img src="https://img.shields.io/badge/tests-715%20passing%20%C2%B7%200%20skipped-brightgreen?style=flat-square" alt="tests">
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT">
 </p>
 
@@ -24,7 +24,7 @@
 
 ## 安装
 
-从 [Releases](https://github.com/Morningstar202604/creator-studio/releases/latest) 下载 `CreatorStudio_0.19.1_x64-setup.exe` 直接运行。安装包自带运行时，机器上不需要另装 Node。
+从 [Releases](https://github.com/Morningstar202604/creator-studio/releases/latest) 下载 `CreatorStudio_0.19.2_x64-setup.exe` 直接运行。安装包自带运行时，机器上不需要另装 Node。
 
 或者从源码跑：
 

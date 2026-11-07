@@ -2,6 +2,21 @@
 
 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号用语义化版本。
 
+## [0.19.2] - 2026-11-07
+
+安装包装好以后，浏览器打开 `http://127.0.0.1:7878/` 是 404。桌面壳自己加载界面，
+所以这个问题在 exe 里看不出来——坏的正是「Web 加后端」这个入口。
+
+### 修复
+
+- **安装版没有 Web 界面**：打包时只把 daemon 的 `dist` 复制进 runtime，没有复制
+  构建好的前端；而 daemon 找界面的路径只认识仓库布局和 `web/` 同级目录，不认
+  `dist/web`。现在 `install-daemon-deps.mjs` 把前端复制到 `daemon-runtime/dist/web`，
+  `findWebRoot()` 优先查这个位置。`apps/daemon/test/web-root.test.ts` 用四个用例锁住：
+  根路径返回 index.html、静态资源可取、未知路径回落 SPA、`/v1/*` 仍然返回 JSON 404。
+- 验证方式：静默安装 → 启动 → `curl /` 返回 200 `text/html`，浏览器渲染出「稿台」
+  与首次引导，亮色主题、daemon 已连接。
+
 ## [0.19.1] - 2026-11-07
 
 第二轮对标调研（见 `docs/COMPETITIVE.md` §7）确认 MCP 是本地优先创作工作台接入

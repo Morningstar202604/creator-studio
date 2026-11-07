@@ -54,13 +54,22 @@ function defaultDataDir(): string {
   return join(process.env.XDG_DATA_HOME ?? join(homedir(), '.local', 'share'), 'creator-studio');
 }
 
-/** The built React bundle, when running from a repo checkout (web mode). */
+/**
+ * The built React bundle.
+ *
+ * Two layouts matter. In a repo checkout the daemon runs from `apps/daemon/dist`
+ * and the UI is a sibling at `apps/desktop/dist`. In an installed app the staged
+ * runtime carries the UI inside itself at `dist/web`, because Tauri only copies
+ * `daemon-runtime/**` and a sibling path would not exist on the user's disk.
+ */
 function findWebRoot(): string | undefined {
   const here = dirname(fileURLToPath(import.meta.url));
   const candidates = [
+    // Installed layout: dist/main.js → dist/web
+    join(here, 'web'),
+    // Repo checkout: apps/daemon/dist → apps/desktop/dist
     join(here, '..', '..', 'desktop', 'dist'),
     join(here, '..', '..', '..', 'apps', 'desktop', 'dist'),
-    join(here, 'web'),
   ];
   return candidates.find((candidate) => existsSync(join(candidate, 'index.html')));
 }
