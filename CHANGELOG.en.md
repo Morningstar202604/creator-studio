@@ -8,6 +8,48 @@ The authoritative changelog is written in Chinese in [`CHANGELOG.md`](CHANGELOG.
 this file carries the same release boundaries for English readers and will be
 kept in sync from 0.17.0 onward.
 
+## [0.19.3] - 2026-11-08
+
+The auto-update path had never worked. The plugin was registered and signatures
+were produced, but nothing in the app ever called it; and the configured endpoint
+was a `releases/latest/download/latest.json` URL that GitCode answers with an HTML
+page for a missing asset, which a JSON parser cannot read. In other words, nobody
+who installed v0.19.2 would ever be told about another release — while
+`docs/STATUS.md` listed auto-update under "not verified", which implied it might
+work.
+
+### Added
+
+- **Check for updates in Settings → About.** Shows the current version, the result,
+  the release notes and a download progress bar. The installer's signature is
+  verified before anything is written; a mismatch aborts and says why. The
+  browser-served build of the same UI states plainly that it cannot self-update
+  and points at the installer, instead of offering a button that throws.
+- `scripts/make-updater-manifest.mjs` builds `latest.json` from the real
+  `.exe.sig` and the changelog (version, notes, publish time, per-platform
+  signature and URL) and refuses to write a manifest whose signature does not look
+  like a minisign bundle.
+- `apps/desktop/src-tauri/capabilities/default.json`. There was no capabilities
+  file at all, so the Tauri ACL was empty and the plugin's frontend calls were
+  rejected. It now grants `core:default` and `updater:default`, nothing wider.
+
+### Fixed
+
+- **The endpoint could never return JSON.** It now lists three raw file URLs
+  (Gitee → GitCode → GitHub), all served as plain text with no browser session;
+  the updater falls through to the next one when a host fails.
+- **`latest.json` did not exist anywhere.** It is committed at the repo root, which
+  gives the updater a stable address.
+- **The v0.19.2 tag pointed at the wrong commit.** The tag was on `4597d5c` while
+  the version-finishing commit was `aa20e5f`, so a tag checkout had `Cargo.lock`
+  still claiming 0.19.1. Re-tagged here, and `release-contract.test.ts` now asserts
+  that a tag's `Cargo.lock` agrees with its `package.json`.
+
+### Changed
+
+- Manifest notes come from `CHANGELOG.en.md` with newlines normalised, so update
+  prompts no longer contain stray carriage returns.
+
 ## [0.19.2] - 2026-11-07
 
 After installing the package, opening `http://127.0.0.1:7878/` returned 404. The

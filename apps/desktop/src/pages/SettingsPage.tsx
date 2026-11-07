@@ -11,6 +11,7 @@ import {
   type StyleProfile,
 } from '../api';
 import { AppShell } from '../components/AppShell';
+import { checkForUpdate, installUpdate, type UpdateState } from '../features/updater';
 import { useTheme, type ThemeMode } from '../lib/theme';
 import { formatCny } from '../lib/format';
 
@@ -753,6 +754,8 @@ function AppearancePanel(): React.ReactElement {
 function AboutPanel(): React.ReactElement {
   const [health, setHealth] = useState<Health | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [update, setUpdate] = useState<UpdateState | null>(null);
+  const [checking, setChecking] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -768,6 +771,20 @@ function AboutPanel(): React.ReactElement {
       active = false;
     };
   }, []);
+
+  const runCheck = async (): Promise<void> => {
+    setChecking(true);
+    setUpdate({ kind: 'checking' });
+    const result = await checkForUpdate(health?.appVersion ?? '');
+    setUpdate(result);
+    setChecking(false);
+  };
+
+  const runInstall = async (): Promise<void> => {
+    setUpdate({ kind: 'downloading', downloaded: 0, total: null });
+    const result = await installUpdate(setUpdate);
+    setUpdate(result);
+  };
 
   const rows: Array<[string, string]> = [
     ['版本', health?.appVersion ?? '读取中…'],
@@ -794,6 +811,58 @@ function AboutPanel(): React.ReactElement {
       <p className="hint">
         报问题时请附上这里的版本号与操作系统：那是判断「是不是已知缺陷」的第一条线索。
       </p>
+
+      <div className="update-block">
+        <div className="row">
+          <button className="btn sm" disabled={checking} onClick={() => void runCheck()}>
+            {checking ? '检查中…' : '检查更新'}
+          </button>
+          <span className="hint">{describeUpdate(update)}</span>
+        </div>
+        {update?.kind === 'downloading' && (
+          <div className="update-progress" aria-live="polite">
+            <i
+              style={{
+                width: `${update.total === null || update.total === 0 ? 10 : Math.min(100, Math.round((update.downloaded / update.total) * 100))}%`,
+              }}
+            />
+          </div>
+        )}
+        {update?.kind === 'available' && (
+          <div className="update-available">
+            {update.notes !== '' && <pre className="output update-notes">{update.notes}</pre>}
+            <button className="btn sm primary" onClick={() => void runInstall()}>
+              下载并安装 {update.version}
+            </button>
+            <p className="hint">安装会校验签名；Windows 上安装完成后应用会自行关闭并重启。</p>
+          </div>
+        )}
+      </div>
     </div>
   );
+}
+
+/** One line of plain language for each updater state. */
+function describeUpdate(state: UpdateState | null): string {
+  if (state === null) return '更新来自官方发布页，安装包带签名校验';
+  switch (state.kind) {
+    case 'unavailable':
+      return state.reason;
+    case 'checking':
+      return '正在联系更新源…';
+    case 'current':
+      return `已是最新版本${state.version === '' ? '' : `（${state.version}）`}`;
+    case 'available':
+      return `有可用的新版本 ${state.version}`;
+    case 'downloading':
+      return state.total === null
+        ? `正在下载… ${Math.round(state.downloaded / 1024)} KB`
+        : `正在下载… ${Math.round((state.downloaded / state.total) * 100)}%`;
+    case 'installed':
+      return `已安装 ${state.version}，重启后生效`;
+    case 'error':
+      return state.message;
+    default:
+      return '';
+  }
 }

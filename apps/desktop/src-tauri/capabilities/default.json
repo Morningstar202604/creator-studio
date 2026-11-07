@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Permissions the bundled UI needs. Deliberately narrow: the app is a local-first client whose only privileged surface is installing its own signed updates.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "updater:default"
+  ]
+}

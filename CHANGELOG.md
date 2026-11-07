@@ -2,6 +2,39 @@
 
 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号用语义化版本。
 
+## [0.19.3] - 2026-11-08
+
+自动更新这条链路上一次真正跑通的时间是「从来没有」：插件注册了、签名也生成了，
+但应用里没有任何地方调用它；配置里的更新地址是 `releases/latest/download/latest.json`，
+在 GitCode 上对缺失资产返回的是一张 HTML 页面，JSON 解析器读不了。换句话说，
+用户装完 v0.19.2 之后不会再收到任何更新提示——而 README 把这一条列在「未验证」里，
+掩盖了它其实是「不通」。
+
+### 新增
+
+- **设置 → 关于里可以检查更新**：显示当前版本、检查结果、新版本说明与下载进度条；
+  安装包在安装前校验签名，校验失败会中止并说明原因。浏览器打开的版本会明确写
+  「不能自助更新，下载新的安装包覆盖安装」，不会给一个点了报错的按钮。
+- `scripts/make-updater-manifest.mjs`：从真实的 `.exe.sig` 与变更记录生成
+  `latest.json`（版本、说明、发布时间、按平台的签名与下载地址），并校验签名前缀。
+- `apps/desktop/src-tauri/capabilities/default.json`：此前没有任何 capabilities 文件，
+  Tauri 的 ACL 是空的，插件的前端调用会被拒绝；现在按最小面授予 `core:default`
+  与 `updater:default`。
+
+### 修复
+
+- **更新地址永远返回不了 JSON**：改为三个 raw 地址（Gitee → GitCode → GitHub），
+  都是纯文本直出、不需要浏览器会话，前一个不通自动试下一个。
+- **`latest.json` 从来不存在**：现在随仓库发布，更新源因此稳定可寻址。
+- **v0.19.2 的 tag 指错了提交**：tag 指向 `4597d5c`，而版本收尾提交是 `aa20e5f`，
+  该 tag 的 `Cargo.lock` 仍写着 0.19.1。已在本版重新打 tag，并加
+  `release-contract.test.ts` 校验「tag 处的 Cargo.lock 必须与 package.json 一致」。
+
+### 变更
+
+- `latest.json` 的说明取自 `CHANGELOG.en.md`，生成时统一换行符，避免更新提示里
+  出现游离的回车。
+
 ## [0.19.2] - 2026-11-07
 
 安装包装好以后，浏览器打开 `http://127.0.0.1:7878/` 是 404。桌面壳自己加载界面，

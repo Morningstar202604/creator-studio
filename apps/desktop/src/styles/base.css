@@ -3200,3 +3200,48 @@ a:hover {
   font-size: 12px;
   margin: 8px 0 10px;
 }
+
+/* Update panel in Settings → About. Kept quiet by default: a version check is a
+   once-in-a-while action, not something that should shout from the page. */
+.update-block {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.update-block .row {
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.update-available {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.update-notes {
+  width: 100%;
+  max-height: 200px;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.update-progress {
+  margin-top: 8px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--track);
+  overflow: hidden;
+}
+
+.update-progress i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 180ms ease-out;
+}
